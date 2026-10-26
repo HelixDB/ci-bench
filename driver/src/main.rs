@@ -78,6 +78,10 @@ struct RunArgs {
     /// Seconds a run may take before it is cancelled.
     #[arg(long, default_value_t = bench::Patience::STANDARD.run.as_secs())]
     run_timeout: u64,
+    /// Seconds between polls of a run (raise it when several batches share one token's rate
+    /// limit).
+    #[arg(long, default_value_t = bench::Patience::STANDARD.poll.as_secs())]
+    poll: u64,
     /// Print the cells and exit; contacts nothing.
     #[arg(long)]
     dry_run: bool,
@@ -200,6 +204,7 @@ async fn run(root: &std::path::Path, args: RunArgs) -> anyhow::Result<ExitCode> 
     let patience = bench::Patience {
         queued: std::time::Duration::from_secs(args.queue_timeout),
         run: std::time::Duration::from_secs(args.run_timeout),
+        poll: std::time::Duration::from_secs(args.poll.max(1)),
         ..bench::Patience::STANDARD
     };
     let result = bench::Bench {
