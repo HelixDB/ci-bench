@@ -17,6 +17,8 @@ license = "MIT OR Apache-2.0"
 install = "cargo test --no-run"
 test = "cargo nextest run && cargo test --doc"
 
+# fixtures/rust-large/.config/nextest.toml is ci-bench's, not upstream: it runs the tests that
+# share a temporary directory across nextest's per-test processes one at a time.
 [[fixture]]
 name = "rust-large"
 toolchain = "rust"

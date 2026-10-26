@@ -1,0 +1,16 @@
+# ci-bench's addition to the ripgrep snapshot (not upstream): the tests that share a temporary
+# directory across processes run one at a time. nextest runs every test in its own process, so
+# the process-local counters naming these directories start at 0 in each, and concurrent tests
+# create, use and delete the same directory:
+# - every `ignore` test: $TMPDIR/rust-ignore/<n> (crates/ignore/src/lib.rs, TempDir::new);
+# - misc::context and multiline::context, misc::vimgrep and multiline::vimgrep:
+#   $TMPDIR/ripgrep-tests/<test name>/0 (tests/util.rs, Dir::new).
+# (`cargo test` runs a binary's tests as threads of one process, where the counters differ.)
+# Custom profiles inherit `default`, so its overrides apply to every profile.
+
+[test-groups]
+shared-temp-dir = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "package(ignore) | (binary_id(ripgrep::integration) & test(/^(misc|multiline)::(context|vimgrep)$/))"
+test-group = "shared-temp-dir"

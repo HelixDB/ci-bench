@@ -21,7 +21,7 @@ prices on the day of the run.
 | Name | Upstream | Commit | License | Toolchain and caching |
 |---|---|---|---|---|
 | `rust-small` | [dtolnay/semver](https://github.com/dtolnay/semver) 1.0.28 | `7625c7a` | MIT OR Apache-2.0 | rustup 1.97.1, cargo-nextest 0.9.149 (`cargo nextest run` then `cargo test --doc`), `Swatinem/rust-cache` (saved from `main`) |
-| `rust-large` | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) 15.2.0 | `e89fff8` | Unlicense OR MIT | same |
+| `rust-large` | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) 15.2.0 | `e89fff8` | Unlicense OR MIT | same; `.config/nextest.toml` (ours, not upstream) runs the tests that share a temporary directory one at a time |
 | `go-small` | [google/uuid](https://github.com/google/uuid) v1.6.0 | `0f11ee6` | BSD-3-Clause | Go 1.27.3, `actions/setup-go` module and build cache |
 | `go-large` | [gin-gonic/gin](https://github.com/gin-gonic/gin) v1.12.0 | `73726dc` | MIT | same |
 | `node-small` | [unjs/defu](https://github.com/unjs/defu) v6.1.7 | `80c0146` | MIT | `pnpm/action-setup`, `actions/setup-node` pnpm store cache; Vitest |
