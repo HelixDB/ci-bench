@@ -366,7 +366,7 @@ mod tests {
         assert!(
             yaml.contains("if: inputs.fixture == 'rust-small' || inputs.fixture == 'rust-large'")
         );
-        assert!(yaml.contains("            python-large) python -m pip install -e . tblib ;;"));
+        assert!(yaml.contains("            python-large) python3 -m venv .venv && .venv/bin/python -m pip install -e . tblib ;;"));
         assert!(yaml.contains("save-if: ${{ github.ref == 'refs/heads/main' }}"));
         for pin in [
             CHECKOUT,

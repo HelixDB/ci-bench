@@ -127,7 +127,7 @@ jobs:
             node-small) pnpm install --frozen-lockfile ;;
             node-large) pnpm install --frozen-lockfile ;;
             python-small) uv sync --locked --group tests ;;
-            python-large) python -m pip install -e . tblib ;;
+            python-large) python3 -m venv .venv && .venv/bin/python -m pip install -e . tblib ;;
             *) echo "unknown fixture $FIXTURE" >&2; exit 2 ;;
           esac
       - name: test
@@ -142,6 +142,6 @@ jobs:
             node-small) pnpm exec vitest run ;;
             node-large) pnpm exec vitest run --project unit ;;
             python-small) uv run --locked --group tests pytest ;;
-            python-large) python tests/runtests.py --parallel ;;
+            python-large) .venv/bin/python tests/runtests.py --parallel ;;
             *) echo "unknown fixture $FIXTURE" >&2; exit 2 ;;
           esac
