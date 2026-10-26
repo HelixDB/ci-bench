@@ -70,12 +70,13 @@ cargo run --release -p ci-bench -- apply --fixture go-small --scenario leaf --di
 ```
 
 `run` commits each scenario on a throwaway branch `bench/<batch>-<fixture>-<scenario>-<n>`
-(through the Git Data API, no clone), dispatches every runner's workflow on it, polls until each
-run completes (a run queued over 15 minutes or unfinished after 70 is cancelled and recorded as
-such), measures and prices it, deletes the branch, and writes one `ci-bench/1` JSON file
-(`driver/tests/sample-report.json` shows the format). `--warm` first runs each fixture's
-`baseline` on `main`, whose runs save the caches the branches restore. Rate limits are waited
-out (GitHub's `Date` and reset headers), server errors retried.
+(through the Git Data API, no clone), dispatches every runner's workflow on it (the dispatch
+answer names the run: `return_run_details`; one that does not is found by its tag within 2
+minutes), polls until each run completes (a run queued over 15 minutes or unfinished after 70 is
+cancelled and recorded as such), measures and prices it, deletes the branch, and writes one
+`ci-bench/1` JSON file (`driver/tests/sample-report.json` shows the format). `--warm` first runs
+each fixture's `baseline` on `main`, whose runs save the caches the branches restore. Rate
+limits are waited out (GitHub's `Date` and reset headers), server errors retried.
 
 Other systems can be measured on the same fixtures and diffs: `apply` edits a copy of a fixture
 exactly as the branches are edited, and a result file may hold any arm.

@@ -7,7 +7,7 @@
 //! | [`read_file`] | `GET /repos/{repo}/contents/{path}?ref={sha}` (404: absent) |
 //! | [`commit_branch`] | `GET …/git/commits/{base}`, `POST …/git/trees`, `POST …/git/commits`, `POST …/git/refs` |
 //! | [`delete_branch`] | `DELETE …/git/refs/heads/{branch}` (422/404: already gone) |
-//! | [`dispatch`] | `POST …/actions/workflows/{file}/dispatches` (200 names the run; 204: find it by tag) |
+//! | [`dispatch`] | `POST …/actions/workflows/{file}/dispatches` with `return_run_details` (200 names the run; 204, or a 200 without its id: find it by tag) |
 //! | [`find_run`] | `GET …/actions/workflows/{file}/runs?branch=…&event=workflow_dispatch` |
 //! | [`run`], [`job`] | `GET …/actions/runs/{id}`, `GET …/actions/runs/{id}/jobs` |
 //! | [`cancel`] | `POST …/actions/runs/{id}/cancel` |
@@ -164,7 +164,10 @@ pub async fn delete_branch(
     }
 }
 
-/// Dispatches `workflow` on `git_ref` with `inputs`: the run's id when GitHub names it.
+/// Dispatches `workflow` on `git_ref` with `inputs`, asking GitHub for the run's id
+/// (`return_run_details`: a 200 with `workflow_run_id`). The id, or `None` when the 2xx answer
+/// names no run (a 204, GitHub's answer without the field, or no positive integer id), for
+/// [`find_run`] to find it by its tag.
 ///
 /// # Errors
 /// [`ApiError`] (an unknown workflow or ref, or invalid inputs, are 4xx).
@@ -176,22 +179,9 @@ pub async fn dispatch(
     inputs: &Value,
 ) -> Result<Option<u64>, ApiError> {
     let path = format!("/repos/{repo}/actions/workflows/{workflow}/dispatches");
-    let r = client
-        .call(
-            Method::Post,
-            &path,
-            Some(&json!({"ref": git_ref, "inputs": inputs})),
-        )
-        .await?;
-    match r.status {
-        200 => Ok(r.json["workflow_run_id"].as_u64()),
-        204 => Ok(None),
-        s => Err(bad(
-            Method::Post,
-            &path,
-            format!("answered {s}: {}", r.message()),
-        )),
-    }
+    let body = json!({"ref": git_ref, "inputs": inputs, "return_run_details": true});
+    let answer = client.ok(Method::Post, &path, Some(&body)).await?;
+    Ok(answer["workflow_run_id"].as_u64().filter(|&id| id > 0))
 }
 
 /// The newest dispatched run of `workflow` on `branch` whose title ends with `tag` (the
@@ -422,5 +412,79 @@ mod tests {
         assert_eq!(calls[3].2.as_ref().unwrap()["ref"], "main");
         assert!(calls[6].1.contains("event=workflow_dispatch"));
         assert_eq!(calls[7].1, "/repos/o/r/actions/runs/7/jobs?filter=latest");
+    }
+
+    #[tokio::test]
+    async fn dispatch_asks_for_the_run_and_reads_its_id() {
+        let named = |id: Value| {
+            Response::new(
+                200,
+                json!({"workflow_run_id": id, "run_url": "https://api.github.com/repos/o/r/actions/runs/1", "html_url": "https://github.com/o/r/actions/runs/1"}),
+            )
+        };
+        let answers = vec![
+            // Run ids are past u32 (int64 in GitHub's schema).
+            named(json!(18_734_210_517_u64)),
+            named(json!(1)),
+            // A 200 that names no usable run: found by tag instead.
+            named(json!(0)),
+            named(json!(-5)),
+            named(json!("77")),
+            named(json!(7.5)),
+            named(Value::Null),
+            Response::new(200, json!({"run_url": "u", "html_url": "h"})),
+            Response::new(200, Value::Null),
+            // GitHub's answer without return_run_details.
+            Response::new(204, Value::Null),
+            // Any other 2xx accepted the dispatch: its id if it names one.
+            Response::new(201, json!({"workflow_run_id": 3})),
+        ];
+        let expected = [
+            Some(18_734_210_517),
+            Some(1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(3),
+        ];
+        let c = client(answers);
+        let inputs =
+            json!({"fixture": "go-small", "scenario": "leaf", "tag": "t-1", "cache": "true"});
+        for want in expected {
+            assert_eq!(
+                dispatch(&c, "o/r", "w.yml", "bench/t-1", &inputs)
+                    .await
+                    .unwrap(),
+                want
+            );
+        }
+        let calls = c_calls(&c);
+        assert_eq!(calls.len(), expected.len());
+        for (method, path, body) in &calls {
+            assert_eq!(*method, Method::Post);
+            assert_eq!(path, "/repos/o/r/actions/workflows/w.yml/dispatches");
+            assert_eq!(
+                body.as_ref().unwrap(),
+                &json!({"ref": "bench/t-1", "inputs": inputs, "return_run_details": true})
+            );
+        }
+
+        // Refusals are errors with GitHub's message, not runs to look for.
+        let c = client(vec![
+            Response::new(422, json!({"message": "Unexpected inputs provided"})),
+            Response::new(404, json!({"message": "Not Found"})),
+            Response::new(301, json!({"workflow_run_id": 3})),
+        ]);
+        for status in ["422: Unexpected inputs provided", "404: Not Found", "301: "] {
+            let err = dispatch(&c, "o/r", "w.yml", "main", &inputs)
+                .await
+                .unwrap_err();
+            assert!(err.detail.contains(status), "{err}");
+        }
     }
 }

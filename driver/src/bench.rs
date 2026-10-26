@@ -6,8 +6,9 @@
 //!    a scripted scenario is committed on `bench/<tag>` from `main`'s head through the Git Data
 //!    API ([`crate::actions::commit_branch`]).
 //! 2. **dispatch** every runner's workflow on that ref with inputs `fixture`, `scenario`, `tag`
-//!    (all at once: the runners are independent); a dispatch GitHub does not answer with the
-//!    run's id is found by its tag within [`Patience::find`].
+//!    (all at once: the runners are independent). GitHub answers each with its run's id
+//!    (`return_run_details`); a dispatch answered without one is found by its tag within
+//!    [`Patience::find`].
 //! 3. **poll** every run each [`Patience::poll`] until completed. A run still queued after
 //!    [`Patience::queued`], or unfinished after [`Patience::run`], is cancelled and recorded
 //!    with a note (a cancelled run has no verdict).
@@ -63,7 +64,7 @@ pub struct Plan {
 pub struct Patience {
     /// Between polls.
     pub poll: Duration,
-    /// For a dispatched run to appear.
+    /// For a run its dispatch answer did not name to appear (found by its tag).
     pub find: Duration,
     /// For a run to leave the queue.
     pub queued: Duration,
@@ -425,7 +426,7 @@ mod tests {
     use crate::scenario::SCENARIOS_TOML;
 
     /// GitHub as a state machine: run 1 queues once then succeeds, run 2 never leaves the
-    /// queue; the second runner's dispatch answers 204 (found by tag).
+    /// queue; the second runner's dispatch answers 204, naming no run (found by tag).
     #[derive(Default)]
     struct Fake {
         calls: RefCell<Vec<String>>,
@@ -475,11 +476,15 @@ mod tests {
                 }
                 (Method::Post, "/repos/o/r/git/commits") => ok(json!({"sha": sha('c')})),
                 (Method::Post, "/repos/o/r/git/refs") => Ok(Response::new(201, json!({}))),
-                (Method::Post, p) if p.ends_with("bench-ubuntu-latest.yml/dispatches") => {
-                    ok(json!({"workflow_run_id": 1}))
-                }
                 (Method::Post, p) if p.ends_with("dispatches") => {
-                    Ok(Response::new(204, Value::Null))
+                    let body = body.unwrap();
+                    assert_eq!(body["return_run_details"], true, "{body}");
+                    assert_eq!(body["ref"], "bench/b1-go-small-leaf-1");
+                    if p.ends_with("bench-ubuntu-latest.yml/dispatches") {
+                        ok(json!({"workflow_run_id": 1}))
+                    } else {
+                        Ok(Response::new(204, Value::Null))
+                    }
                 }
                 (Method::Get, p) if p.contains("/runs?branch=") => ok(
                     json!({"workflow_runs": [{"id": 2, "display_title": format!("go-small leaf {}", "b1-go-small-leaf-1")}]}),
@@ -686,5 +691,95 @@ mod tests {
         );
         assert!(report.runs.iter().all(|r| r.outcome == Outcome::Error));
         assert_eq!(report.date, "1970-01-01", "no Date header from the fake");
+    }
+
+    /// GitHub accepting every dispatch without naming its run (204): ubuntu-latest's run never
+    /// shows up in the list, listing Blacksmith ARM's runs fails.
+    #[derive(Default)]
+    struct Unlisted {
+        lists: RefCell<u32>,
+    }
+    impl Api for Unlisted {
+        async fn send(
+            &self,
+            method: Method,
+            path: &str,
+            _: Option<&Value>,
+        ) -> Result<Response, ApiError> {
+            Ok(match (method, path) {
+                (Method::Get, "/repos/o/r") => Response::new(200, json!({})),
+                (Method::Get, "/repos/o/r/git/ref/heads/main") => {
+                    Response::new(200, json!({"object": {"sha": "m".repeat(40)}}))
+                }
+                (Method::Post, p) if p.ends_with("/dispatches") => Response::new(204, Value::Null),
+                (Method::Get, p) if p.contains("bench-ubuntu-latest.yml/runs?branch=main&") => {
+                    *self.lists.borrow_mut() += 1;
+                    Response::new(200, json!({"workflow_runs": []}))
+                }
+                (Method::Get, p) if p.contains("/runs?branch=main&") => {
+                    Response::new(500, Value::Null)
+                }
+                _ => panic!("unexpected {} {path}", method.as_str()),
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_search_for_an_unnamed_run_is_bounded() {
+        let catalog = Catalog::parse(FIXTURES_TOML).unwrap();
+        let scenarios = Scenarios::parse(SCENARIOS_TOML, &catalog).unwrap();
+        let pricing = Pricing::parse(PRICING_TOML).unwrap();
+        let plan = Plan {
+            repo: "o/r".into(),
+            label: "x".into(),
+            runners: vec![Runner::UbuntuLatest, Runner::Blacksmith2404Arm],
+            cells: vec![Cell {
+                fixture: "go-small".parse().unwrap(),
+                scenario: ScenarioName::Baseline,
+            }],
+            repeats: 1,
+            id: "b3".into(),
+        };
+        let patience = Patience {
+            poll: Duration::from_secs(10),
+            find: Duration::from_secs(30),
+            ..Patience::STANDARD
+        };
+        let client = Client::new(
+            Unlisted::default(),
+            Limits {
+                attempts: 1,
+                ..Limits::STANDARD
+            },
+        );
+        let start = Instant::now();
+        let report = Bench {
+            client: &client,
+            catalog: &catalog,
+            scenarios: &scenarios,
+            pricing: &pricing,
+            plan: &plan,
+            patience,
+        }
+        .run()
+        .await;
+        let [gha, bs] = report.runs.as_slice() else {
+            panic!("{:?}", report.runs)
+        };
+        assert_eq!(
+            gha.note.as_deref(),
+            Some("no run tagged b3-go-small-baseline-1 appeared")
+        );
+        assert!(
+            bs.note
+                .as_deref()
+                .unwrap()
+                .starts_with("finding the run: GET "),
+            "{bs:?}"
+        );
+        assert!(report.runs.iter().all(|r| r.outcome == Outcome::Error));
+        // Looked for at 0, 10, 20 and 30 s; given up at 40 s, the first poll past `find`.
+        assert_eq!(*client.api_ref().lists.borrow(), 5);
+        assert_eq!(start.elapsed(), Duration::from_secs(40));
     }
 }
