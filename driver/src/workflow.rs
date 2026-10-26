@@ -16,6 +16,9 @@ use crate::catalog::{Catalog, Fixture, Runner, Toolchain};
 
 /// The Rust toolchain the Rust fixtures build with.
 pub const RUST_TOOLCHAIN: &str = "1.97.1";
+/// Go for both Go fixtures (one exact release: `go.mod` need not name one, and runners
+/// preinstall different versions or none).
+pub const GO_VERSION: &str = "1.27.3";
 /// Node.js for the pnpm fixtures.
 pub const NODE_VERSION: &str = "24";
 /// Python for both Python fixtures.
@@ -107,7 +110,7 @@ fn toolchain_steps(toolchain: Toolchain, if_: &str) -> String {
         Toolchain::Go => step(
             "go",
             &format!(
-                "        uses: {}\n        with:\n          go-version-file: {dir}/go.mod\n          cache-dependency-path: {dir}/go.*\n",
+                "        uses: {}\n        with:\n          go-version: \"{GO_VERSION}\"\n          cache-dependency-path: {dir}/go.*\n",
                 SETUP_GO.uses()
             ),
         ),
@@ -353,6 +356,8 @@ mod tests {
             assert_eq!(pin.sha.len(), 40, "{} pinned to a commit", pin.repo);
             assert!(yaml.contains(&pin.uses()), "{}", pin.repo);
         }
+        assert!(yaml.contains(&format!("go-version: \"{GO_VERSION}\"")));
+        assert!(!yaml.contains("go-version-file"), "go.mod need not name a version");
         assert!(yaml.ends_with("esac\n"));
     }
 

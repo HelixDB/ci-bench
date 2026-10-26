@@ -287,11 +287,18 @@ impl Https {
         Ok(Self { http, token })
     }
 
-    /// The operator's token from `gh auth token` (the gh CLI's active account).
+    /// The operator's token: `GH_TOKEN` (gh's own variable, for running the driver on another
+    /// machine without signing gh in there), else `gh auth token` (gh's active account).
     ///
     /// # Errors
-    /// gh is missing, signed out, or printed nothing.
+    /// Neither gives a token.
     pub async fn token_from_gh() -> Result<String, String> {
+        if let Some(token) = std::env::var("GH_TOKEN")
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+        {
+            return Ok(token.trim().to_owned());
+        }
         let out = tokio::process::Command::new("gh")
             .args(["auth", "token"])
             .output()

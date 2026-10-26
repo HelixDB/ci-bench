@@ -36,7 +36,7 @@ pub enum CatalogError {
 pub enum Toolchain {
     /// rustup with the pinned toolchain, `Swatinem/rust-cache` (saved from `main` only).
     Rust,
-    /// `actions/setup-go` from `go.mod`, with its module and build cache.
+    /// `actions/setup-go` with the pinned Go, caching modules and builds keyed by `go.*`.
     Go,
     /// `pnpm/action-setup` from `packageManager`, `actions/setup-node` caching the pnpm store.
     NodePnpm,

@@ -63,7 +63,7 @@ jobs:
         if: inputs.fixture == 'go-small' || inputs.fixture == 'go-large'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: fixtures/${{ inputs.fixture }}/go.mod
+          go-version: "1.27.3"
           cache-dependency-path: fixtures/${{ inputs.fixture }}/go.*
       - name: "toolchain: pnpm"
         if: inputs.fixture == 'node-small' || inputs.fixture == 'node-large'
