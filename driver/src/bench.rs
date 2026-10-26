@@ -1,7 +1,8 @@
 //! One benchmark batch: every (fixture, scenario) cell, `repeats` times, on every runner.
 //!
 //! Per cell and repeat, in order:
-//! 1. **commit:** `baseline` runs on `main` (whose runs save the caches every branch restores);
+//! 1. **commit:** `baseline` runs on `main` (whose runs save the caches every branch restores),
+//!    and so does `cold`, with input `cache: false` (no cache restored or saved);
 //!    a scripted scenario is committed on `bench/<tag>` from `main`'s head through the Git Data
 //!    API ([`crate::actions::commit_branch`]).
 //! 2. **dispatch** every runner's workflow on that ref with inputs `fixture`, `scenario`, `tag`
@@ -221,7 +222,7 @@ impl<A: Api> Bench<'_, A> {
             "{}-{}-{}-{repeat}",
             self.plan.id, cell.fixture, cell.scenario
         );
-        let branch = (cell.scenario != ScenarioName::Baseline).then(|| format!("bench/{tag}"));
+        let branch = (!cell.scenario.unedited()).then(|| format!("bench/{tag}"));
         if let Some(branch) = &branch {
             let committed = match self.changes(cell, base).await {
                 Ok(changes) => actions::commit_branch(
@@ -267,7 +268,12 @@ impl<A: Api> Bench<'_, A> {
     /// Dispatches every runner and polls until each run is done or given up.
     async fn follow(&self, cell: &Cell, tag: &str, git_ref: &str) -> Vec<Pending> {
         let repo = &self.plan.repo;
-        let inputs = json!({"fixture": cell.fixture.as_str(), "scenario": cell.scenario.as_str(), "tag": tag});
+        let cache = if cell.scenario == ScenarioName::Cold {
+            "false"
+        } else {
+            "true"
+        };
+        let inputs = json!({"fixture": cell.fixture.as_str(), "scenario": cell.scenario.as_str(), "tag": tag, "cache": cache});
         let mut pending = Vec::new();
         for runner in &self.plan.runners {
             let workflow = runner.workflow();

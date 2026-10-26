@@ -11,7 +11,7 @@ prices on the day of the run.
 |---|---|
 | `fixtures/<name>` | pinned snapshots of permissively licensed open-source projects (no `.git` or `.github`; each keeps its upstream license) |
 | `fixtures.toml` | each fixture's upstream, commit, license, toolchain, and its `install` and `test` commands |
-| `scenarios.toml` | the scripted diffs per fixture: `leaf`, `mid_graph`, `trigger`, `test_only`, `docs_only`, `add`, `delete`, `rename` (`baseline` is the fixture as vendored) |
+| `scenarios.toml` | the scripted diffs per fixture: `leaf`, `mid_graph`, `trigger`, `test_only`, `docs_only`, `add`, `delete`, `rename` (`baseline` is the fixture as vendored; `cold` is `baseline` with every cache step off, input `cache: false`) |
 | `pricing.toml` | dated per-minute list prices of every runner, with sources |
 | `.github/workflows/bench-<runner>.yml` | one `workflow_dispatch` workflow per runner, rendered from `fixtures.toml` and identical but for `runs-on` |
 | `driver/` | the `ci-bench` binary (Rust) |
@@ -20,7 +20,7 @@ prices on the day of the run.
 
 | Name | Upstream | Commit | License | Toolchain and caching |
 |---|---|---|---|---|
-| `rust-small` | [dtolnay/semver](https://github.com/dtolnay/semver) 1.0.28 | `7625c7a` | MIT OR Apache-2.0 | rustup 1.97.1, `Swatinem/rust-cache` (saved from `main`) |
+| `rust-small` | [dtolnay/semver](https://github.com/dtolnay/semver) 1.0.28 | `7625c7a` | MIT OR Apache-2.0 | rustup 1.97.1, cargo-nextest 0.9.149 (`cargo nextest run` then `cargo test --doc`), `Swatinem/rust-cache` (saved from `main`) |
 | `rust-large` | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) 15.2.0 | `e89fff8` | Unlicense OR MIT | same |
 | `go-small` | [google/uuid](https://github.com/google/uuid) v1.6.0 | `0f11ee6` | BSD-3-Clause | Go 1.27.3, `actions/setup-go` module and build cache |
 | `go-large` | [gin-gonic/gin](https://github.com/gin-gonic/gin) v1.12.0 | `73726dc` | MIT | same |
@@ -37,6 +37,11 @@ prices on the day of the run.
 | `bench-ubuntu-24.04-arm.yml` | `ubuntu-24.04-arm` | 4 (public repository) | $0.005 |
 | `bench-blacksmith-2vcpu-ubuntu-2404.yml` | `blacksmith-2vcpu-ubuntu-2404` | 2 | $0.004 |
 | `bench-blacksmith-2vcpu-ubuntu-2404-arm.yml` | `blacksmith-2vcpu-ubuntu-2404-arm` | 2 | $0.0025 |
+
+GitHub gives public repositories 4-vCPU standard runners and no 2-vCPU label, so the GitHub
+arms have twice the vCPUs of the 2-vCPU Blacksmith and Crucible arms (their wall times favour
+GitHub; their costs are priced at the 2-core rate). Blacksmith's caching is its documented
+setup: the upstream cache and setup actions, which its runners redirect to its colocated cache.
 
 Prices are list prices for a paying repository, the lowest each label sells at (GitHub-hosted
 runs of this public repository are free). Blacksmith's own Go build cache replaces the

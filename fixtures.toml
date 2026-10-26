@@ -15,7 +15,7 @@ tag = "1.0.28"
 commit = "7625c7aa3f0e8ba21e099d1765bcebcb72aa8816"
 license = "MIT OR Apache-2.0"
 install = "cargo test --no-run"
-test = "cargo test"
+test = "cargo nextest run && cargo test --doc"
 
 [[fixture]]
 name = "rust-large"
@@ -25,7 +25,7 @@ tag = "15.2.0"
 commit = "e89fff89ac9af12e8d4ce9d5fd07beb408ca730f"
 license = "Unlicense OR MIT"
 install = "cargo test --workspace --locked --no-run"
-test = "cargo test --workspace --locked"
+test = "cargo nextest run --workspace --locked && cargo test --workspace --locked --doc"
 
 [[fixture]]
 name = "go-small"

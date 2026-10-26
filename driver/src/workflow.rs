@@ -23,6 +23,13 @@ pub const GO_VERSION: &str = "1.27.3";
 pub const NODE_VERSION: &str = "24";
 /// Python for both Python fixtures.
 pub const PYTHON_VERSION: &str = "3.13";
+/// cargo-nextest for the Rust fixtures (Crucible's runner image pin), with its SHA-256 per
+/// architecture of the release tarball.
+pub const NEXTEST_VERSION: &str = "0.9.149";
+const NEXTEST_SHA256_X86_64: &str =
+    "32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770";
+const NEXTEST_SHA256_AARCH64: &str =
+    "6f82e375187cf3a1f3e336879a51940c315a5d0ce7253f7e517ad28295b74189";
 /// A job is cancelled by GitHub after this long.
 pub const JOB_TIMEOUT_MINUTES: u32 = 60;
 
@@ -75,6 +82,10 @@ const SETUP_PYTHON: Pin = Pin {
     tag: "v7.1.0",
 };
 
+/// The expression that is true unless the run is cold (input `cache` is `false`): every cache
+/// step restores and saves only then.
+const CACHED: &str = "inputs.cache != 'false'";
+
 /// `inputs.fixture == 'a' || inputs.fixture == 'b'` for the fixtures of `toolchain`.
 fn guard(fixtures: &[&Fixture]) -> String {
     fixtures
@@ -87,19 +98,27 @@ fn guard(fixtures: &[&Fixture]) -> String {
 /// The setup and cache steps of `toolchain` (`dir` is the fixture directory expression).
 fn toolchain_steps(toolchain: Toolchain, if_: &str) -> String {
     let dir = "fixtures/${{ inputs.fixture }}";
-    let step = |name: &str, body: &str| {
+    let step_if = |name: &str, if_: &str, body: &str| {
         format!("      - name: \"toolchain: {name}\"\n        if: {if_}\n{body}")
     };
+    let step = |name: &str, body: &str| step_if(name, if_, body);
     match toolchain {
         Toolchain::Rust => [
             step(
                 "rust",
                 &format!(
-                    "        run: rustup toolchain install {RUST_TOOLCHAIN} --profile minimal --no-self-update && rustup default {RUST_TOOLCHAIN}\n"
+                    "        run: |\n          if ! command -v rustup >/dev/null; then\n            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none\n            echo \"$HOME/.cargo/bin\" >> \"$GITHUB_PATH\"\n            export PATH=\"$HOME/.cargo/bin:$PATH\"\n          fi\n          rustup toolchain install {RUST_TOOLCHAIN} --profile minimal --no-self-update && rustup default {RUST_TOOLCHAIN}\n"
                 ),
             ),
             step(
+                "nextest",
+                &format!(
+                    "        run: |\n          case \"$(uname -m)\" in\n            x86_64) sha={NEXTEST_SHA256_X86_64} ;;\n            aarch64) sha={NEXTEST_SHA256_AARCH64} ;;\n            *) echo \"no cargo-nextest for $(uname -m)\" >&2; exit 2 ;;\n          esac\n          curl --proto '=https' --tlsv1.2 -fsSL -o \"$RUNNER_TEMP/nextest.tar.gz\" \"https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{NEXTEST_VERSION}/cargo-nextest-{NEXTEST_VERSION}-$(uname -m)-unknown-linux-gnu.tar.gz\"\n          echo \"$sha  $RUNNER_TEMP/nextest.tar.gz\" | sha256sum -c -\n          mkdir -p \"$RUNNER_TEMP/bin\" && tar -xzf \"$RUNNER_TEMP/nextest.tar.gz\" -C \"$RUNNER_TEMP/bin\"\n          echo \"$RUNNER_TEMP/bin\" >> \"$GITHUB_PATH\"\n"
+                ),
+            ),
+            step_if(
                 "rust cache",
+                &format!("({if_}) && {CACHED}"),
                 &format!(
                     "        uses: {}\n        with:\n          workspaces: {dir}\n          shared-key: ${{{{ inputs.fixture }}}}\n          save-if: ${{{{ github.ref == 'refs/heads/main' }}}}\n",
                     RUST_CACHE.uses()
@@ -110,7 +129,7 @@ fn toolchain_steps(toolchain: Toolchain, if_: &str) -> String {
         Toolchain::Go => step(
             "go",
             &format!(
-                "        uses: {}\n        with:\n          go-version: \"{GO_VERSION}\"\n          cache-dependency-path: {dir}/go.*\n",
+                "        uses: {}\n        with:\n          go-version: \"{GO_VERSION}\"\n          cache: ${{{{ {CACHED} }}}}\n          cache-dependency-path: {dir}/go.*\n",
                 SETUP_GO.uses()
             ),
         ),
@@ -125,7 +144,7 @@ fn toolchain_steps(toolchain: Toolchain, if_: &str) -> String {
             step(
                 "node",
                 &format!(
-                    "        uses: {}\n        with:\n          node-version: \"{NODE_VERSION}\"\n          cache: pnpm\n          cache-dependency-path: {dir}/pnpm-lock.yaml\n",
+                    "        uses: {}\n        with:\n          node-version: \"{NODE_VERSION}\"\n          cache: ${{{{ {CACHED} && 'pnpm' || '' }}}}\n          cache-dependency-path: {dir}/pnpm-lock.yaml\n",
                     SETUP_NODE.uses()
                 ),
             ),
@@ -134,14 +153,14 @@ fn toolchain_steps(toolchain: Toolchain, if_: &str) -> String {
         Toolchain::PythonUv => step(
             "uv",
             &format!(
-                "        uses: {}\n        with:\n          python-version: \"{PYTHON_VERSION}\"\n          enable-cache: true\n          cache-dependency-glob: {dir}/uv.lock\n",
+                "        uses: {}\n        with:\n          python-version: \"{PYTHON_VERSION}\"\n          enable-cache: ${{{{ {CACHED} }}}}\n          cache-dependency-glob: {dir}/uv.lock\n",
                 SETUP_UV.uses()
             ),
         ),
         Toolchain::PythonPip => step(
             "python",
             &format!(
-                "        uses: {}\n        with:\n          python-version: \"{PYTHON_VERSION}\"\n          cache: pip\n          cache-dependency-path: {dir}/pyproject.toml\n",
+                "        uses: {}\n        with:\n          python-version: \"{PYTHON_VERSION}\"\n          cache: ${{{{ {CACHED} && 'pip' || '' }}}}\n          cache-dependency-path: {dir}/pyproject.toml\n",
                 SETUP_PYTHON.uses()
             ),
         ),
@@ -214,6 +233,11 @@ on:
         required: true
         type: string
         default: manual
+      cache:
+        description: Set to false to turn every cache step off (a cold run)
+        required: false
+        type: string
+        default: \"true\"
 
 permissions:
   contents: read
@@ -357,7 +381,10 @@ mod tests {
             assert!(yaml.contains(&pin.uses()), "{}", pin.repo);
         }
         assert!(yaml.contains(&format!("go-version: \"{GO_VERSION}\"")));
-        assert!(!yaml.contains("go-version-file"), "go.mod need not name a version");
+        assert!(
+            !yaml.contains("go-version-file"),
+            "go.mod need not name a version"
+        );
         assert!(yaml.ends_with("esac\n"));
     }
 

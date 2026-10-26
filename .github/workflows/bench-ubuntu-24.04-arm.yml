@@ -30,6 +30,11 @@ on:
         required: true
         type: string
         default: manual
+      cache:
+        description: Set to false to turn every cache step off (a cold run)
+        required: false
+        type: string
+        default: "true"
 
 permissions:
   contents: read
@@ -51,9 +56,27 @@ jobs:
           persist-credentials: false
       - name: "toolchain: rust"
         if: inputs.fixture == 'rust-small' || inputs.fixture == 'rust-large'
-        run: rustup toolchain install 1.97.1 --profile minimal --no-self-update && rustup default 1.97.1
-      - name: "toolchain: rust cache"
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal --no-self-update && rustup default 1.97.1
+      - name: "toolchain: nextest"
         if: inputs.fixture == 'rust-small' || inputs.fixture == 'rust-large'
+        run: |
+          case "$(uname -m)" in
+            x86_64) sha=32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770 ;;
+            aarch64) sha=6f82e375187cf3a1f3e336879a51940c315a5d0ce7253f7e517ad28295b74189 ;;
+            *) echo "no cargo-nextest for $(uname -m)" >&2; exit 2 ;;
+          esac
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.149/cargo-nextest-0.9.149-$(uname -m)-unknown-linux-gnu.tar.gz"
+          echo "$sha  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: "toolchain: rust cache"
+        if: (inputs.fixture == 'rust-small' || inputs.fixture == 'rust-large') && inputs.cache != 'false'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: fixtures/${{ inputs.fixture }}
@@ -64,6 +87,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
+          cache: ${{ inputs.cache != 'false' }}
           cache-dependency-path: fixtures/${{ inputs.fixture }}/go.*
       - name: "toolchain: pnpm"
         if: inputs.fixture == 'node-small' || inputs.fixture == 'node-large'
@@ -75,21 +99,21 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-          cache: pnpm
+          cache: ${{ inputs.cache != 'false' && 'pnpm' || '' }}
           cache-dependency-path: fixtures/${{ inputs.fixture }}/pnpm-lock.yaml
       - name: "toolchain: uv"
         if: inputs.fixture == 'python-small'
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
-          enable-cache: true
+          enable-cache: ${{ inputs.cache != 'false' }}
           cache-dependency-glob: fixtures/${{ inputs.fixture }}/uv.lock
       - name: "toolchain: python"
         if: inputs.fixture == 'python-large'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-          cache: pip
+          cache: ${{ inputs.cache != 'false' && 'pip' || '' }}
           cache-dependency-path: fixtures/${{ inputs.fixture }}/pyproject.toml
       - name: install
         env:
@@ -111,8 +135,8 @@ jobs:
           FIXTURE: ${{ inputs.fixture }}
         run: |
           case "$FIXTURE" in
-            rust-small) cargo test ;;
-            rust-large) cargo test --workspace --locked ;;
+            rust-small) cargo nextest run && cargo test --doc ;;
+            rust-large) cargo nextest run --workspace --locked && cargo test --workspace --locked --doc ;;
             go-small) go test ./... ;;
             go-large) go test ./... ;;
             node-small) pnpm exec vitest run ;;

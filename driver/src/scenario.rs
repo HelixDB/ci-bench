@@ -39,6 +39,9 @@ pub const SCENARIOS_TOML: &str = include_str!("../../scenarios.toml");
 pub enum ScenarioName {
     /// The fixture as vendored (no edits; what warms caches on `main`).
     Baseline,
+    /// The fixture as vendored on `main` with every cache step off (`cache: false`): a cold
+    /// first run.
+    Cold,
     /// Code few modules depend on.
     Leaf,
     /// Code many modules depend on.
@@ -70,6 +73,18 @@ impl ScenarioName {
         Self::Rename,
     ];
 
+    /// Whether the scenario runs the fixture as vendored, on `main` (`baseline`, `cold`).
+    ///
+    /// ```
+    /// use ci_bench::scenario::ScenarioName;
+    /// assert!(ScenarioName::Cold.unedited() && ScenarioName::Baseline.unedited());
+    /// assert!(!ScenarioName::Leaf.unedited());
+    /// ```
+    #[must_use]
+    pub const fn unedited(self) -> bool {
+        matches!(self, Self::Baseline | Self::Cold)
+    }
+
     /// The name as written in files and workflow inputs.
     ///
     /// ```
@@ -82,6 +97,7 @@ impl ScenarioName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Baseline => "baseline",
+            Self::Cold => "cold",
             Self::Leaf => "leaf",
             Self::MidGraph => "mid_graph",
             Self::Trigger => "trigger",
@@ -97,7 +113,8 @@ impl ScenarioName {
 impl FromStr for ScenarioName {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
-        std::iter::once(Self::Baseline)
+        [Self::Baseline, Self::Cold]
+            .into_iter()
             .chain(Self::SCRIPTED)
             .find(|n| n.as_str() == s)
             .ok_or_else(|| format!("{s:?} is not a scenario"))
@@ -346,9 +363,9 @@ impl Scenarios {
             if catalog.fixture(s.fixture.as_str()).is_none() {
                 return Err(ScenarioError::Invalid(format!("{at}: no such fixture")));
             }
-            if s.name == ScenarioName::Baseline || s.edits.is_empty() {
+            if s.name.unedited() || s.edits.is_empty() {
                 return Err(ScenarioError::Invalid(format!(
-                    "{at}: baseline is implicit and a scripted scenario has edits"
+                    "{at}: baseline and cold are implicit and a scripted scenario has edits"
                 )));
             }
             let list = s
@@ -377,11 +394,11 @@ impl Scenarios {
         Ok(Self { edits })
     }
 
-    /// The edits of `scenario` on `fixture` (empty for `baseline`), or `None` for an unknown
-    /// fixture.
+    /// The edits of `scenario` on `fixture` (empty for `baseline` and `cold`), or `None` for an
+    /// unknown fixture.
     #[must_use]
     pub fn edits(&self, fixture: &str, scenario: ScenarioName) -> Option<&[Edit]> {
-        if scenario == ScenarioName::Baseline {
+        if scenario.unedited() {
             return self
                 .edits
                 .keys()
