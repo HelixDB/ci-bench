@@ -1,0 +1,58 @@
+import type { NProgress, NProgressOptions } from 'nprogress'
+import type { MaybeRefOrGetter, Ref, WritableComputedRef } from 'vue'
+import { isClient, toRef, tryOnScopeDispose } from '@vueuse/shared'
+import nprogress from 'nprogress'
+import { computed, watchEffect } from 'vue'
+
+export type UseNProgressOptions = Partial<NProgressOptions>
+
+export interface UseNProgressReturn {
+  isLoading: WritableComputedRef<boolean, boolean>
+  progress: Ref<number | null | undefined>
+  start: () => NProgress
+  done: (force?: boolean) => NProgress
+  remove: () => void
+}
+
+/**
+ * Reactive progress bar.
+ *
+ * @see https://vueuse.org/useNProgress
+ */
+export function useNProgress(
+  currentProgress: MaybeRefOrGetter<number | null | undefined> = null,
+  options?: UseNProgressOptions,
+): UseNProgressReturn {
+  const progress = toRef(currentProgress)
+  const isLoading = computed({
+    set: load => load ? nprogress.start() : nprogress.done(),
+    get: () => typeof progress.value === 'number' && progress.value < 1,
+  })
+
+  if (options)
+    nprogress.configure(options)
+
+  const setProgress = nprogress.set
+  nprogress.set = (n: number) => {
+    progress.value = n
+    return setProgress.call(nprogress, n)
+  }
+
+  watchEffect(() => {
+    if (typeof progress.value === 'number' && isClient)
+      setProgress.call(nprogress, progress.value)
+  })
+
+  tryOnScopeDispose(nprogress.remove)
+
+  return {
+    isLoading,
+    progress,
+    start: nprogress.start,
+    done: nprogress.done,
+    remove: () => {
+      progress.value = null
+      nprogress.remove()
+    },
+  }
+}

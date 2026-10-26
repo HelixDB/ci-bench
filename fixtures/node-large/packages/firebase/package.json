@@ -1,0 +1,56 @@
+{
+  "name": "@vueuse/firebase",
+  "type": "module",
+  "version": "15.0.0",
+  "description": "Enables realtime bindings for Firebase",
+  "author": "Anthony Fu <https://github.com/antfu>",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/antfu",
+  "homepage": "https://github.com/vueuse/vueuse/tree/main/packages/firebase#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vueuse/vueuse.git",
+    "directory": "packages/firebase"
+  },
+  "bugs": {
+    "url": "https://github.com/vueuse/vueuse/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue-use",
+    "utils",
+    "firebase",
+    "vuefire"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./*": "./dist/*",
+    "./useAuth": "./dist/useAuth.js",
+    "./useFirestore": "./dist/useFirestore.js",
+    "./useRTDB": "./dist/useRTDB.js",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "unpkg": "./dist/index.iife.min.js",
+  "jsdelivr": "./dist/index.iife.min.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "pnpm run build"
+  },
+  "peerDependencies": {
+    "firebase": ">=9.0.0",
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "@vueuse/shared": "workspace:*"
+  }
+}

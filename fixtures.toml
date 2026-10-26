@@ -1,0 +1,89 @@
+# The benchmark fixtures: snapshots of permissively licensed open-source projects at a pinned
+# commit, vendored under fixtures/<name> without their .git and .github directories (each keeps
+# its upstream license file). Every runner runs the same two commands with bash in
+# fixtures/<name>: `install` (dependencies and the build, warm from the ecosystem's cache) and
+# `test`. `toolchain` picks the setup and cache steps of the workflows.
+#
+# `ci-bench validate` checks this file against fixtures/; `ci-bench workflows --write` renders
+# .github/workflows from it.
+
+[[fixture]]
+name = "rust-small"
+toolchain = "rust"
+upstream = "https://github.com/dtolnay/semver"
+tag = "1.0.28"
+commit = "7625c7aa3f0e8ba21e099d1765bcebcb72aa8816"
+license = "MIT OR Apache-2.0"
+install = "cargo test --no-run"
+test = "cargo test"
+
+[[fixture]]
+name = "rust-large"
+toolchain = "rust"
+upstream = "https://github.com/BurntSushi/ripgrep"
+tag = "15.2.0"
+commit = "e89fff89ac9af12e8d4ce9d5fd07beb408ca730f"
+license = "Unlicense OR MIT"
+install = "cargo test --workspace --locked --no-run"
+test = "cargo test --workspace --locked"
+
+[[fixture]]
+name = "go-small"
+toolchain = "go"
+upstream = "https://github.com/google/uuid"
+tag = "v1.6.0"
+commit = "0f11ee6918f41a04c201eceeadf612a377bc7fbc"
+license = "BSD-3-Clause"
+install = "go mod download && go test -run '^$' ./..."
+test = "go test ./..."
+
+[[fixture]]
+name = "go-large"
+toolchain = "go"
+upstream = "https://github.com/gin-gonic/gin"
+tag = "v1.12.0"
+commit = "73726dc606796a025971fe451f0aa6f1b9b847f6"
+license = "MIT"
+install = "go mod download && go test -run '^$' ./..."
+test = "go test ./..."
+
+[[fixture]]
+name = "node-small"
+toolchain = "node_pnpm"
+upstream = "https://github.com/unjs/defu"
+tag = "v6.1.7"
+commit = "80c0146afb11ebd86183a579ec469f3abd976695"
+license = "MIT"
+install = "pnpm install --frozen-lockfile"
+test = "pnpm exec vitest run"
+
+[[fixture]]
+name = "node-large"
+toolchain = "node_pnpm"
+upstream = "https://github.com/vueuse/vueuse"
+tag = "v15.0.0"
+commit = "3cfd9f2d761327e450f3d5e530106f06adcb5137"
+license = "MIT"
+install = "pnpm install --frozen-lockfile"
+test = "pnpm exec vitest run --project unit"
+
+[[fixture]]
+name = "python-small"
+toolchain = "python_uv"
+upstream = "https://github.com/pallets/itsdangerous"
+# Unreleased main: the 2.2.0 tag predates its uv.lock.
+tag = "main"
+commit = "672971d66a2ef9f85151e53283113f33d642dabd"
+license = "BSD-3-Clause"
+install = "uv sync --locked --group tests"
+test = "uv run --locked --group tests pytest"
+
+[[fixture]]
+name = "python-large"
+toolchain = "python_pip"
+upstream = "https://github.com/django/django"
+tag = "5.2.18"
+commit = "3ae618c745df5b87053ad91588c72a4c8e646853"
+license = "BSD-3-Clause"
+install = "python -m pip install -e . tblib"
+test = "python tests/runtests.py --parallel"

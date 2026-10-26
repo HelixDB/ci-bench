@@ -1,0 +1,134 @@
+/* this implementation is original ported from https://github.com/logaretm/vue-use-web by Abdelrahman Awad */
+
+import type { ConfigurableEventFilter } from '@vueuse/shared'
+import type { ComputedRef, Ref, ShallowRef } from 'vue'
+import type { ConfigurableWindow } from '../_configurable'
+import type { Supportable } from '../types'
+import { bypassFilter, createFilterWrapper } from '@vueuse/shared'
+import { ref as deepRef, shallowRef } from 'vue'
+import { defaultWindow } from '../_configurable'
+import { useEventListener } from '../useEventListener'
+import { useSupported } from '../useSupported'
+
+export interface UseDeviceMotionOptions extends ConfigurableWindow, ConfigurableEventFilter {
+  /**
+   * Request for permissions immediately if it's not granted,
+   * otherwise label and deviceIds could be empty
+   *
+   * @default false
+   */
+  requestPermissions?: boolean
+}
+
+/** @deprecated use {@link UseDeviceMotionOptions} instead */
+export type DeviceMotionOptions = UseDeviceMotionOptions
+
+interface DeviceMotionEventiOS extends UseDeviceMotionOptions {
+  requestPermission: () => Promise<'granted' | 'denied'>
+}
+
+export interface UseDeviceMotionReturn extends Supportable {
+  acceleration: Ref<DeviceMotionEventAcceleration | null>
+  accelerationIncludingGravity: Ref<DeviceMotionEventAcceleration | null>
+  rotationRate: Ref<DeviceMotionEventRotationRate | null>
+  interval: ShallowRef<number>
+  requirePermissions: ComputedRef<boolean>
+  ensurePermissions: () => Promise<void>
+  permissionGranted: ShallowRef<boolean>
+}
+
+/**
+ * Reactive DeviceMotionEvent.
+ *
+ * @see https://vueuse.org/useDeviceMotion
+ * @param options
+ */
+export function useDeviceMotion(options: UseDeviceMotionOptions = {}): UseDeviceMotionReturn {
+  const {
+    window = defaultWindow,
+    requestPermissions = false,
+    eventFilter = bypassFilter,
+  } = options
+
+  const isSupported = useSupported(() => typeof DeviceMotionEvent !== 'undefined')
+  const requirePermissions = useSupported(() => isSupported.value && 'requestPermission' in DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function')
+  const permissionGranted = shallowRef(false)
+  const acceleration: Ref<DeviceMotionEvent['acceleration']> = deepRef({ x: null, y: null, z: null })
+  const rotationRate: Ref<DeviceMotionEvent['rotationRate']> = deepRef({ alpha: null, beta: null, gamma: null })
+  const interval = shallowRef(0)
+  const accelerationIncludingGravity: Ref<DeviceMotionEvent['accelerationIncludingGravity']> = deepRef({
+    x: null,
+    y: null,
+    z: null,
+  })
+
+  function init() {
+    if (window) {
+      const onDeviceMotion = createFilterWrapper(
+        eventFilter,
+        (event: DeviceMotionEvent) => {
+          acceleration.value = {
+            x: event.acceleration?.x || null,
+            y: event.acceleration?.y || null,
+            z: event.acceleration?.z || null,
+          }
+          accelerationIncludingGravity.value = {
+            x: event.accelerationIncludingGravity?.x || null,
+            y: event.accelerationIncludingGravity?.y || null,
+            z: event.accelerationIncludingGravity?.z || null,
+          }
+          rotationRate.value = {
+            alpha: event.rotationRate?.alpha || null,
+            beta: event.rotationRate?.beta || null,
+            gamma: event.rotationRate?.gamma || null,
+          }
+          interval.value = event.interval
+        },
+      )
+
+      useEventListener(window, 'devicemotion', onDeviceMotion, { passive: true })
+    }
+  }
+
+  const ensurePermissions = async () => {
+    if (!requirePermissions.value)
+      permissionGranted.value = true
+
+    if (permissionGranted.value)
+      return
+    if (requirePermissions.value) {
+      const requestPermission = (DeviceMotionEvent as unknown as DeviceMotionEventiOS).requestPermission
+      try {
+        const response = await requestPermission()
+        if (response === 'granted') {
+          permissionGranted.value = true
+          init()
+        }
+      }
+      catch (error) {
+        console.error(error)
+      }
+    }
+  }
+
+  if (isSupported.value) {
+    if (requestPermissions && requirePermissions.value) {
+      ensurePermissions()
+        .then(() => init())
+    }
+    else {
+      init()
+    }
+  }
+
+  return {
+    acceleration,
+    accelerationIncludingGravity,
+    rotationRate,
+    interval,
+    isSupported,
+    requirePermissions,
+    ensurePermissions,
+    permissionGranted,
+  }
+}

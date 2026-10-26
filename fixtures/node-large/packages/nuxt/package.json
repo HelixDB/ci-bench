@@ -1,0 +1,60 @@
+{
+  "name": "@vueuse/nuxt",
+  "type": "module",
+  "version": "15.0.0",
+  "description": "VueUse Nuxt Module",
+  "author": "Anthony Fu <https://github.com/antfu>",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/antfu",
+  "homepage": "https://github.com/vueuse/vueuse/tree/main/packages/nuxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vueuse/vueuse.git",
+    "directory": "packages/nuxt"
+  },
+  "bugs": {
+    "url": "https://github.com/vueuse/vueuse/issues"
+  },
+  "keywords": [
+    "vue",
+    "vueuse",
+    "nuxt",
+    "nuxt3",
+    "nuxt-module"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/module.mjs",
+    "./module": "./dist/module.mjs",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/module.mjs",
+  "module": "./dist/module.mjs",
+  "types": "./dist/types.d.mts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsdown --config-loader unrun",
+    "prepack": "pnpm run build"
+  },
+  "peerDependencies": {
+    "nuxt": "^3.0.0 || ^4.0.0-0 || ^5.0.0-0",
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "@nuxt/kit": "catalog:integrations",
+    "@vueuse/core": "workspace:*",
+    "@vueuse/metadata": "workspace:*",
+    "local-pkg": "catalog:integrations"
+  },
+  "devDependencies": {
+    "@nuxt/schema": "catalog:integrations",
+    "nuxt": "catalog:dev",
+    "tsdown": "catalog:dev",
+    "unimport": "catalog:dev"
+  }
+}

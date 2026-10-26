@@ -1,0 +1,99 @@
+import type { ComputedRef, ShallowRef } from 'vue'
+import type { ConfigurableDocument, ConfigurableNavigator } from '../_configurable'
+import type { Supportable } from '../types'
+import { tryOnScopeDispose, whenever } from '@vueuse/shared'
+import { computed, shallowRef } from 'vue'
+import { defaultDocument, defaultNavigator } from '../_configurable'
+import { useDocumentVisibility } from '../useDocumentVisibility'
+import { useEventListener } from '../useEventListener'
+import { useSupported } from '../useSupported'
+
+type WakeLockType = 'screen'
+
+export interface WakeLockSentinel extends EventTarget {
+  type: WakeLockType
+  released: boolean
+  release: () => Promise<void>
+}
+
+type NavigatorWithWakeLock = Navigator & {
+  wakeLock: { request: (type: WakeLockType) => Promise<WakeLockSentinel> }
+}
+
+export type UseWakeLockOptions = ConfigurableNavigator & ConfigurableDocument
+
+export interface UseWakeLockReturn extends Supportable {
+  sentinel: ShallowRef<WakeLockSentinel | null>
+  isActive: ComputedRef<boolean>
+  request: (type: WakeLockType) => Promise<void>
+  forceRequest: (type: WakeLockType) => Promise<void>
+  release: () => Promise<void>
+}
+
+/**
+ * Reactive Screen Wake Lock API.
+ *
+ * @see https://vueuse.org/useWakeLock
+ * @param options
+ *
+ * @__NO_SIDE_EFFECTS__
+ */
+export function useWakeLock(options: UseWakeLockOptions = {}): UseWakeLockReturn {
+  const {
+    navigator = defaultNavigator,
+    document = defaultDocument,
+  } = options
+  const requestedType = shallowRef<WakeLockType | false>(false)
+  const sentinel = shallowRef<WakeLockSentinel | null>(null)
+  const documentVisibility = useDocumentVisibility({ document })
+  const isSupported = useSupported(() => navigator && 'wakeLock' in navigator)
+  const isActive = computed(() => !!sentinel.value && documentVisibility.value === 'visible')
+
+  if (isSupported.value) {
+    useEventListener(sentinel, 'release', () => {
+      requestedType.value = sentinel.value?.type ?? false
+    }, { passive: true })
+
+    whenever(
+      () => documentVisibility.value === 'visible' && document?.visibilityState === 'visible' && requestedType.value,
+      (type) => {
+        requestedType.value = false
+        forceRequest(type)
+      },
+    )
+  }
+
+  async function forceRequest(type: WakeLockType) {
+    await sentinel.value?.release()
+    sentinel.value = isSupported.value
+      ? await (navigator as NavigatorWithWakeLock).wakeLock.request(type)
+      : null
+  }
+
+  async function request(type: WakeLockType) {
+    if (documentVisibility.value === 'visible')
+      await forceRequest(type)
+    else
+      requestedType.value = type
+  }
+
+  async function release() {
+    requestedType.value = false
+    const s = sentinel.value
+    sentinel.value = null
+    await s?.release()
+  }
+
+  tryOnScopeDispose(() => {
+    release()
+  })
+
+  return {
+    sentinel,
+    isSupported,
+    isActive,
+    request,
+    forceRequest,
+    release,
+  }
+}

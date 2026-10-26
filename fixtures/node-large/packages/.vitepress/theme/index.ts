@@ -1,0 +1,50 @@
+import type { Theme } from 'vitepress'
+import TwoSlashFloatingVue from '@shikijs/vitepress-twoslash/client'
+import DefaultTheme from 'vitepress/theme'
+import { functions } from '../../../packages/metadata/metadata'
+import { handleRedirects } from './redirects'
+// Docs-only polyfill so the `useTemporalNow` demo works in browsers/engines
+// without native `Temporal` support yet (the `/full/` variant is used so the
+// demo's non-Gregorian calendars work). `@vueuse/core` itself ships with no
+// such dependency, see `packages/core/useTemporalNow/index.md`.
+import 'temporal-polyfill/full/global'
+import '@shikijs/vitepress-twoslash/style.css'
+
+import './styles/main.css'
+import './styles/demo.css'
+import './styles/utils.css'
+import './styles/vars.css'
+import './styles/overrides.css'
+import 'uno.css'
+
+export default {
+  extends: DefaultTheme,
+  enhanceApp(ctx) {
+    if (typeof window !== 'undefined')
+      handleRedirects(ctx.router)
+    ctx.app.use(TwoSlashFloatingVue)
+
+    // Redirect function shorthands
+    // For example `/useDark` to `/core/useDark`
+    ctx.router.onBeforeRouteChange = (to: string) => {
+      const name = to.replace(/\.html$/i, '').replace(/^\//, '')
+      if (name.includes('/'))
+        return
+      const fn = functions.find(f => f.name === name)
+      if (!fn)
+        return
+
+      setTimeout(() => ctx.router.go(`/${fn.package}/${fn.name}/`), 0)
+      // Abort the navigation
+      return false
+    }
+  },
+} satisfies Theme
+
+// Vue School banner, skip on SSG or in an iframe
+if (typeof window !== 'undefined' && window.self === window.top) {
+  const script = document.createElement('script')
+  script.async = true
+  script.src = 'https://media.bitterbrains.com/main.js?from=vueuse&type=bottom'
+  document.head.appendChild(script)
+}
