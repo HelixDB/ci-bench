@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["driver"]
+# The Rust fixtures are projects of their own, never members.
+exclude = ["fixtures"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+dbg_macro = "warn"
+manual_let_else = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+needless_pass_by_value = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+cast_lossless = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+explicit_iter_loop = "warn"
+match_same_arms = "warn"

@@ -1,0 +1,37 @@
+[package]
+name = "ci-bench"
+description = "Drives the ci-bench workflows: applies scripted agent diffs on throwaway branches, dispatches every runner, and collects GitHub's timings and list-price costs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ci_bench"
+
+[[bin]]
+name = "ci-bench"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive"] }
+humantime = "2.4.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "http2", "rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "process", "fs"] }
+toml = "1.1.8"
+uuid = { version = "1.29.0", features = ["v7"] }
+webpki-roots = "1.0.11"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["test-util"] }

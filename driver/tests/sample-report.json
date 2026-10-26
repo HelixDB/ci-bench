@@ -1,0 +1,35 @@
+{
+  "schema": "ci-bench/1",
+  "date": "2026-10-26",
+  "label": "smoke",
+  "source": {
+    "tool": "ci-bench",
+    "version": "0.1.0",
+    "repo": "HelixDB/ci-bench",
+    "base_commit": "0000000000000000000000000000000000000000"
+  },
+  "runs": [
+    {
+      "arm": "ubuntu-latest",
+      "provider": "github",
+      "arch": "x86_64",
+      "vcpus": 4,
+      "fixture": "go-small",
+      "scenario": "leaf",
+      "repeat": 1,
+      "outcome": "success",
+      "url": "https://github.com/HelixDB/ci-bench/actions/runs/1",
+      "head_sha": "1111111111111111111111111111111111111111",
+      "times_s": {
+        "queue": 3.0,
+        "start": 14.0,
+        "verdict": 55.0,
+        "total": 60.0
+      },
+      "billed_s": 60.0,
+      "usd": 0.006,
+      "usd_per_minute": 0.006,
+      "pricing_as_of": "2026-10-26"
+    }
+  ]
+}

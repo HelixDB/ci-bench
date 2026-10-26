@@ -1,0 +1,50 @@
+# Published list prices of the runners the workflows use, in USD per minute. Add a new
+# [[table]] (never edit an old one) when a price changes: a run is priced with the latest table
+# whose `as_of` is on or before the day GitHub created the run, so old results keep their prices.
+#
+# `vcpus` is what the runner gives this public repository (GitHub-hosted runners have 4 vCPU on
+# public repositories, 2 on private ones). `usd_per_minute` is the label's list price for a
+# paying (private) repository, the lowest price that label is sold at; runs on this public
+# repository are free on GitHub-hosted runners. `rounding` is how a job's duration becomes
+# billed time: `minute` rounds each job up to whole minutes.
+
+[[table]]
+as_of = "2026-10-26"
+
+[[table.runner]]
+label = "ubuntu-latest"
+provider = "github"
+arch = "x86_64"
+vcpus = 4
+usd_per_minute = 0.006
+rounding = "minute"
+source = "https://docs.github.com/en/billing/reference/actions-runner-pricing (Linux 2-core x64)"
+
+[[table.runner]]
+label = "ubuntu-24.04-arm"
+provider = "github"
+arch = "aarch64"
+vcpus = 4
+usd_per_minute = 0.005
+rounding = "minute"
+source = "https://docs.github.com/en/billing/reference/actions-runner-pricing (Linux 2-core arm64)"
+
+[[table.runner]]
+label = "blacksmith-2vcpu-ubuntu-2404"
+provider = "blacksmith"
+arch = "x86_64"
+vcpus = 2
+usd_per_minute = 0.004
+# Not stated on the pricing page; assumed like GitHub's.
+rounding = "minute"
+source = "https://www.blacksmith.sh/pricing (Ubuntu x64, 2 vCPU)"
+
+[[table.runner]]
+label = "blacksmith-2vcpu-ubuntu-2404-arm"
+provider = "blacksmith"
+arch = "aarch64"
+vcpus = 2
+usd_per_minute = 0.0025
+# Not stated on the pricing page; assumed like GitHub's.
+rounding = "minute"
+source = "https://www.blacksmith.sh/pricing (Ubuntu ARM, 2 vCPU)"

@@ -1,0 +1,377 @@
+# Scripted agent diffs. Each scenario of a fixture is a list of edits applied to the pristine
+# fixture (paths relative to fixtures/<fixture>); the driver commits them on a throwaway branch
+# and every runner tests that branch. Every scenario keeps the suite passing. `baseline` (no
+# edits) is implicit: the fixture as vendored.
+#
+# Classes (every fixture has each one):
+#   leaf       code few modules depend on       mid_graph  code many modules depend on
+#   trigger    a manifest or tool config file   test_only  an existing test file
+#   docs_only  documentation only               add        a new test file
+#   delete     a test or example file removed   rename     a test file renamed
+#
+# Edits (exactly one of `append`, `create`, `delete`, `rename`, `replace` per edit):
+#   { append = "path", snippet = "name" }           the snippet added at the end of a file
+#   { create = "path", snippet = "name" }           a new file holding the snippet
+#   { delete = "path" }                             a file removed
+#   { rename = "from", to = "to" }                  a file moved, content unchanged
+#   { replace = "path", find = "text", snippet = "name" }  the one occurrence of `find` replaced
+# Snippets are below; a file is read and written as UTF-8 bytes, nothing else changes.
+
+[snippets]
+rust_fn = "\n#[allow(dead_code)]\nfn ci_bench_edit() -> u32 {\n    1\n}\n"
+rust_test = "\n#[test]\nfn ci_bench_test_only() {\n    assert_eq!(1 + 1, 2);\n}\n"
+rust_added = "#[test]\nfn ci_bench_added() {\n    assert_eq!(1 + 1, 2);\n}\n"
+cargo_meta = "\n[package.metadata.ci-bench]\nscenario = \"trigger\"\n"
+go_fn = "\nfunc ciBenchEdit() int {\n\treturn 1\n}\n"
+go_test = "\nfunc TestCiBenchTestOnly(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"arithmetic\")\n\t}\n}\n"
+go_added_uuid = "package uuid\n\nimport \"testing\"\n\nfunc TestCiBenchAdded(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"arithmetic\")\n\t}\n}\n"
+go_added_gin = "package gin\n\nimport \"testing\"\n\nfunc TestCiBenchAdded(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"arithmetic\")\n\t}\n}\n"
+go_mod_comment = "\n// ci-bench: trigger\n"
+ts_fn = "\nfunction ciBenchEdit(): number {\n  return 1\n}\n"
+ts_comment = "\n// ci-bench: trigger\n"
+vitest_test = "\nit('ci-bench test-only', () => {\n  expect(1 + 1).toBe(2)\n})\n"
+vitest_added = "import { expect, it } from 'vitest'\n\nit('ci-bench added', () => {\n  expect(1 + 1).toBe(2)\n})\n"
+package_json_field = "\"version\": \"6.1.7\",\n  \"ciBench\": \"trigger\","
+py_fn = "\n\ndef _ci_bench_edit():\n    return 1\n"
+pytest_test = "\n\ndef test_ci_bench_test_only():\n    assert 1 + 1 == 2\n"
+pytest_added = "def test_ci_bench_added():\n    assert 1 + 1 == 2\n"
+django_test = "\n\nclass CiBenchTestOnlyTests(SimpleTestCase):\n    def test_ci_bench_test_only(self):\n        self.assertEqual(1 + 1, 2)\n"
+django_added = "from django.test import SimpleTestCase\n\n\nclass CiBenchAddedTests(SimpleTestCase):\n    def test_ci_bench_added(self):\n        self.assertEqual(1 + 1, 2)\n"
+pyproject_tool = "\n[tool.ci-bench]\nscenario = \"trigger\"\n"
+docs_line = "\nci-bench: a documentation-only edit.\n"
+
+# ---------------------------------------------------------------- rust-small (semver)
+
+[[scenario]]
+fixture = "rust-small"
+name = "leaf"
+edits = [{ append = "src/display.rs", snippet = "rust_fn" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "mid_graph"
+edits = [{ append = "src/parse.rs", snippet = "rust_fn" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "trigger"
+edits = [{ append = "Cargo.toml", snippet = "cargo_meta" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "test_only"
+edits = [{ append = "tests/test_version.rs", snippet = "rust_test" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "add"
+edits = [{ create = "tests/test_ci_bench.rs", snippet = "rust_added" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "delete"
+edits = [{ delete = "tests/test_autotrait.rs" }]
+
+[[scenario]]
+fixture = "rust-small"
+name = "rename"
+edits = [{ rename = "tests/test_identifier.rs", to = "tests/test_identifier_renamed.rs" }]
+
+# ---------------------------------------------------------------- rust-large (ripgrep)
+
+[[scenario]]
+fixture = "rust-large"
+name = "leaf"
+edits = [{ append = "crates/core/search.rs", snippet = "rust_fn" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "mid_graph"
+edits = [{ append = "crates/globset/src/pathutil.rs", snippet = "rust_fn" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "trigger"
+edits = [{ append = "Cargo.toml", snippet = "cargo_meta" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "test_only"
+edits = [{ append = "tests/misc.rs", snippet = "rust_test" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "docs_only"
+edits = [{ append = "GUIDE.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "add"
+edits = [{ create = "crates/ignore/tests/ci_bench.rs", snippet = "rust_added" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "delete"
+edits = [{ delete = "crates/ignore/examples/walk.rs" }]
+
+[[scenario]]
+fixture = "rust-large"
+name = "rename"
+edits = [{ rename = "crates/ignore/tests/gitignore_skip_bom.rs", to = "crates/ignore/tests/gitignore_skip_bom_renamed.rs" }]
+
+# ---------------------------------------------------------------- go-small (google/uuid)
+
+[[scenario]]
+fixture = "go-small"
+name = "leaf"
+edits = [{ append = "version7.go", snippet = "go_fn" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "mid_graph"
+edits = [{ append = "uuid.go", snippet = "go_fn" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "trigger"
+edits = [{ append = "go.mod", snippet = "go_mod_comment" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "test_only"
+edits = [{ append = "seq_test.go", snippet = "go_test" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "add"
+edits = [{ create = "ci_bench_test.go", snippet = "go_added_uuid" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "delete"
+edits = [{ delete = "json_test.go" }]
+
+[[scenario]]
+fixture = "go-small"
+name = "rename"
+edits = [{ rename = "null_test.go", to = "null_renamed_test.go" }]
+
+# ---------------------------------------------------------------- go-large (gin)
+
+[[scenario]]
+fixture = "go-large"
+name = "leaf"
+edits = [{ append = "binding/toml.go", snippet = "go_fn" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "mid_graph"
+edits = [{ append = "internal/bytesconv/bytesconv.go", snippet = "go_fn" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "trigger"
+edits = [{ append = "go.mod", snippet = "go_mod_comment" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "test_only"
+edits = [{ append = "path_test.go", snippet = "go_test" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "add"
+edits = [{ create = "ci_bench_test.go", snippet = "go_added_gin" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "delete"
+edits = [{ delete = "githubapi_test.go" }]
+
+[[scenario]]
+fixture = "go-large"
+name = "rename"
+edits = [{ rename = "mode_test.go", to = "mode_renamed_test.go" }]
+
+# ---------------------------------------------------------------- node-small (defu)
+
+[[scenario]]
+fixture = "node-small"
+name = "leaf"
+edits = [{ append = "src/defu.ts", snippet = "ts_fn" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "mid_graph"
+edits = [{ append = "src/_utils.ts", snippet = "ts_fn" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "trigger"
+edits = [{ replace = "package.json", find = "\"version\": \"6.1.7\",", snippet = "package_json_field" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "test_only"
+edits = [{ append = "test/utils.test.ts", snippet = "vitest_test" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "add"
+edits = [{ create = "test/ci-bench.test.ts", snippet = "vitest_added" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "delete"
+edits = [{ delete = "test/utils.test.ts" }]
+
+[[scenario]]
+fixture = "node-small"
+name = "rename"
+edits = [{ rename = "test/utils.test.ts", to = "test/utils-renamed.test.ts" }]
+
+# ---------------------------------------------------------------- node-large (vueuse, a pnpm workspace)
+
+[[scenario]]
+fixture = "node-large"
+name = "leaf"
+edits = [{ append = "packages/math/useAbs/index.ts", snippet = "ts_fn" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "mid_graph"
+edits = [{ append = "packages/shared/utils/is.ts", snippet = "ts_fn" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "trigger"
+edits = [{ append = "vitest.config.ts", snippet = "ts_comment" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "test_only"
+edits = [{ append = "packages/shared/get/index.test.ts", snippet = "vitest_test" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "add"
+edits = [{ create = "packages/math/useAbs/ci-bench.test.ts", snippet = "vitest_added" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "delete"
+edits = [{ delete = "packages/math/useAbs/index.test.ts" }]
+
+[[scenario]]
+fixture = "node-large"
+name = "rename"
+edits = [{ rename = "packages/math/useCeil/index.test.ts", to = "packages/math/useCeil/renamed.test.ts" }]
+
+# ---------------------------------------------------------------- python-small (itsdangerous, uv)
+
+[[scenario]]
+fixture = "python-small"
+name = "leaf"
+edits = [{ append = "src/itsdangerous/url_safe.py", snippet = "py_fn" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "mid_graph"
+edits = [{ append = "src/itsdangerous/encoding.py", snippet = "py_fn" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "trigger"
+edits = [{ append = "pyproject.toml", snippet = "pyproject_tool" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "test_only"
+edits = [{ append = "tests/test_itsdangerous/test_encoding.py", snippet = "pytest_test" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "docs_only"
+edits = [{ append = "README.md", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "add"
+edits = [{ create = "tests/test_itsdangerous/test_ci_bench.py", snippet = "pytest_added" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "delete"
+edits = [{ delete = "tests/test_itsdangerous/test_url_safe.py" }]
+
+[[scenario]]
+fixture = "python-small"
+name = "rename"
+edits = [{ rename = "tests/test_itsdangerous/test_url_safe.py", to = "tests/test_itsdangerous/test_url_safe_renamed.py" }]
+
+# ---------------------------------------------------------------- python-large (Django, pip)
+
+[[scenario]]
+fixture = "python-large"
+name = "leaf"
+edits = [{ append = "django/contrib/humanize/templatetags/humanize.py", snippet = "py_fn" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "mid_graph"
+edits = [{ append = "django/utils/text.py", snippet = "py_fn" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "trigger"
+edits = [{ append = "pyproject.toml", snippet = "pyproject_tool" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "test_only"
+edits = [{ append = "tests/utils_tests/test_text.py", snippet = "django_test" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "docs_only"
+edits = [{ append = "README.rst", snippet = "docs_line" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "add"
+edits = [{ create = "tests/utils_tests/test_ci_bench.py", snippet = "django_added" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "delete"
+edits = [{ delete = "tests/utils_tests/test_inspect.py" }]
+
+[[scenario]]
+fixture = "python-large"
+name = "rename"
+edits = [{ rename = "tests/utils_tests/test_timesince.py", to = "tests/utils_tests/test_timesince_renamed.py" }]

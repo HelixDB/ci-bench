@@ -1,0 +1,5 @@
+# The driver's toolchain. Minimal on purpose: the Rust fixtures build under this file too (it is
+# at the repository root), with exactly what the workflows install.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
