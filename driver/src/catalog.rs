@@ -590,6 +590,67 @@ mod tests {
     }
 
     #[test]
+    fn adversarial_rules() {
+        let sha = "0".repeat(40);
+        let bench = |name: &str| {
+            format!(
+                "[[fixture]]\nname = \"{name}\"\ntoolchain = \"go\"\nupstream = \"https://github.com/o/r\"\ntag = \"v1\"\ncommit = \"{sha}\"\nlicense = \"MIT\"\ninstall = \"true\"\ntest = \"go test\"\n"
+            )
+        };
+        let adv = |name: &str, only: &str, except: &str| {
+            format!(
+                "[[adversarial]]\nname = \"{name}\"\ntoolchain = \"go\"\ninstall = \"true\"\ntest = \"go test ./...\"\nonly = '{only}'\nexcept = '{except}'\n"
+            )
+        };
+        let only = r#"go test "$UNIT""#;
+        let except = r#"go test $(go list ./... | grep -vxF "$UNIT")"#;
+        let good = format!("{}{}", bench("a"), adv("adv-a", only, except));
+        let catalog = Catalog::parse(&good).unwrap();
+        assert_eq!(catalog.fixtures().len(), 1);
+        assert_eq!(catalog.adversarial()[0].only, only);
+        assert!(catalog.fixture("adv-a").is_none());
+        assert!(catalog.adversarial_fixture("a").is_none());
+        let why = |text: &str| match Catalog::parse(text) {
+            Err(CatalogError::Invalid { why, .. }) => why,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            why(&format!("{good}{}", adv("adv-a", only, except))),
+            "duplicate name"
+        );
+        assert!(
+            why(&format!("{}{}", bench("adv-b"), adv("adv-a", only, except)))
+                .contains("adversarial")
+        );
+        assert!(why(&format!("{}{}", bench("a"), adv("b", only, except))).contains("named adv-"));
+        assert!(
+            why(&format!(
+                "{}{}",
+                bench("a"),
+                adv("adv-a", "go test ./...", except)
+            ))
+            .contains("$UNIT")
+        );
+        assert!(why(&format!("{}{}", bench("a"), adv("adv-a", only, "go test"))).contains("$UNIT"));
+        assert!(
+            why(&format!("{}{}", bench("a"), adv("adv-a", only, "  ")))
+                .contains("single, non-empty")
+        );
+        assert!(
+            why(&format!(
+                "{}{}",
+                bench("a"),
+                adv("adv-a", "${{ x }} $UNIT", except)
+            ))
+            .contains("single, non-empty")
+        );
+        assert!(
+            Catalog::parse(&format!("{good}extra = 1\n")).is_err(),
+            "unknown keys"
+        );
+    }
+
+    #[test]
     fn check_dir_reports_every_problem() {
         let tmp = tempfile::tempdir().unwrap();
         let sha = "0".repeat(40);
