@@ -10,8 +10,9 @@ prices on the day of the run.
 | Path | What |
 |---|---|
 | `fixtures/<name>` | pinned snapshots of permissively licensed open-source projects (no `.git` or `.github`; each keeps its upstream license) |
-| `fixtures.toml` | each fixture's upstream, commit, license, toolchain, and its `install` and `test` commands |
-| `scenarios.toml` | the scripted diffs per fixture: `leaf`, `mid_graph`, `trigger`, `test_only`, `docs_only`, `add`, `delete`, `rename` (`baseline` is the fixture as vendored; `cold` is `baseline` with every cache step off, input `cache: false`) |
+| `fixtures/adv-<language>` | the [adversarial corpus](#adversarial-corpus): small synthetic projects of ci-bench's own (MIT) |
+| `fixtures.toml` | each fixture's upstream, commit, license, toolchain, and its `install` and `test` commands; each adversarial fixture's commands |
+| `scenarios.toml` | the scripted diffs per fixture: `leaf`, `mid_graph`, `trigger`, `test_only`, `docs_only`, `add`, `delete`, `rename` (`baseline` is the fixture as vendored; `cold` is `baseline` with every cache step off, input `cache: false`); the adversarial cases |
 | `pricing.toml` | dated per-minute list prices of every runner, with sources |
 | `.github/workflows/bench-<runner>.yml` | one `workflow_dispatch` workflow per runner, rendered from `fixtures.toml` and identical but for `runs-on` |
 | `driver/` | the `ci-bench` binary (Rust) |
@@ -55,6 +56,44 @@ Per run, from the Actions runs and jobs APIs (GitHub's clock only):
 `verdict` (run created → tests finished) and `total`; the job's billed time (rounded up to whole
 minutes) and its list-price cost.
 
+## Adversarial corpus
+
+Arms that skip tests a change cannot affect (affected-test selection) are fast only if they are
+sound: a skipped test that the change breaks is a wrong green. The corpus is a set of agent diffs
+built to catch that. Each fixture is a small synthetic project (`fixtures/adv-rust`, `adv-go`,
+`adv-node` for Vitest, `adv-jest`, `adv-python` for pytest), and each case
+(`class = "adversarial"` in `scenarios.toml`) says what a selecting arm must do with it:
+
+| `expect` | The selecting arm must |
+|---|---|
+| `fail`, `breaks = "<unit>"` | fail the job, `<unit>` among the failures (the change breaks that unit and no other) |
+| `fail` without `breaks` | fail the job (the change breaks the build) |
+| `fail`, `limit = true` | nothing: a known limit (a test runs another package's binary, which no static graph sees), reported only |
+| `pass` | pass, running fewer units than the suite has (`leaf_pass`, in every fixture: an arm whose selection is always off fails it) |
+| `full`, `why = "<why>"` | run every unit, for `<why>`: `global` (a lockfile, a manifest, toolchain or runner configuration, a file the runner's configuration loads); the suite stays green |
+
+A unit is named as the fixture's runner names it: a nextest binary id (`adv-core::greeting`), a
+Go import path, a test file's path in the fixture. A fail case's `why` (`unmapped`,
+`shadowing`) is the reason a selection is expected to run everything there; it is reported, not
+required. Every case that breaks a unit also makes the fixture's harmless leaf edit, so a
+selection that loses track of the break still selects something rather than falling back to
+everything.
+
+| Fixture | Cases |
+|---|---|
+| `adv-rust` | an `include_str!` input; another package's test data read at run time; `util.rs` beside `util/mod.rs` (the build breaks); `math.rs` moved to `math/mod.rs` and changed; `Cargo.lock` (full); a build script's input outside every package; `.cargo/config.toml` (full); another package's binary run by a test (limit) |
+| `adv-go` | a file added under a `//go:embed` pattern; another package's `testdata` read at run time; `go.mod`'s language version (loop variables); `go run ./cmd/tool` from a test (limit) |
+| `adv-node` | a vite alias; a tsconfig path; a workspace package; JSON; a Vue single-file component; a template `import()`; a module only `setupFiles` imports; a fixture file read at run time; `util.ts` beside `util/index.ts`; `money.ts` moved to `money/index.ts` and changed; a `#internal` subpath; a `new Worker(new URL(…))`; a `vi.mock` target; an auto-import plugin added through a file the config imports (full); a `.d.ts` (full); type tests turned on (full); `pnpm-lock.yaml` (full); another package's bin run by a test (limit) |
+| `adv-jest` | a `moduleNameMapper` path; a `__mocks__` file added; a module only `setupFilesAfterEnv` requires |
+| `adv-python` | a `conftest.py` fixture; a package `__init__.py`'s side effect; an `importlib` import by name; an undotted `pytest_plugins` entry; `tests/helpers.py` imported through the rootdir; a data file; `ext.py` beside the namespace package `ext/`; `python -m adv.cli` from a test; `money.py` moved to `money/__init__.py` and changed; `uv.lock` (full); a pytest-django setting (full) |
+
+Only arms that select tests run the corpus: no workflow includes the adversarial fixtures, and
+`run` refuses them. `ci-bench corpus` checks on local toolchains (cargo-nextest, Go, pnpm, uv)
+that every case holds what it claims: each fixture installs and passes as vendored; a case with
+`breaks` fails `test` and the fixture's `only` command for that unit, and passes its `except`
+command (every unit but that one); a build-breaking case fails `install` or `test`; `pass` and
+`full` cases pass.
+
 ## Running it
 
 Needs the [gh](https://cli.github.com) CLI signed in with access to the repository (the driver
@@ -67,6 +106,8 @@ cargo run --release -p ci-bench -- run --label smoke \
   --fixture go-small --scenario leaf --out smoke.json      # every runner
 cargo run --release -p ci-bench -- run --warm --repeats 3 --out full.json
 cargo run --release -p ci-bench -- apply --fixture go-small --scenario leaf --dir /tmp/copy
+cargo run --release -p ci-bench -- apply --fixture adv-go --scenario go_mod --dir /tmp/copy
+cargo run --release -p ci-bench -- corpus --fixture adv-go   # the adversarial cases, locally
 ```
 
 `run` commits each scenario on a throwaway branch `bench/<batch>-<fixture>-<scenario>-<n>`
@@ -83,5 +124,5 @@ exactly as the branches are edited, and a result file may hold any arm.
 
 ## License
 
-The driver, workflows and data files are MIT (`LICENSE`). Each fixture keeps its upstream
-license, in its directory.
+The driver, workflows, data files and adversarial fixtures are MIT (`LICENSE`). Each benchmark
+fixture keeps its upstream license, in its directory.
