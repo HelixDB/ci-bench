@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use anyhow::Context as _;
 use ci_bench::catalog::{Catalog, Runner};
 use ci_bench::scenario::{ScenarioName, Scenarios};
-use ci_bench::{bench, github, pricing, scenario, workflow};
+use ci_bench::{bench, corpus, github, pricing, scenario, workflow};
 use clap::Parser;
 
 /// Head-to-head CI benchmark driver.
@@ -35,12 +35,25 @@ enum Command {
         /// The fixture.
         #[arg(long)]
         fixture: String,
-        /// The scenario.
+        /// The scenario: a benchmark class, or an adversarial fixture's case.
         #[arg(long)]
-        scenario: ScenarioName,
+        scenario: String,
         /// The copy of fixtures/<fixture> to edit.
         #[arg(long)]
         dir: PathBuf,
+    },
+    /// Check every adversarial case on local toolchains (cargo-nextest, Go, pnpm, uv): a
+    /// breaking case breaks exactly its unit, the others stay green.
+    Corpus {
+        /// Adversarial fixtures (repeat; default every one).
+        #[arg(long = "fixture")]
+        fixtures: Vec<String>,
+        /// Cases (repeat; default every case of the fixtures).
+        #[arg(long = "case")]
+        cases: Vec<String>,
+        /// Seconds one command may take.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
     },
     /// Run a batch on GitHub and write its ci-bench/1 result file.
     Run(Box<RunArgs>),
@@ -112,6 +125,17 @@ fn validate(root: &std::path::Path) -> anyhow::Result<ExitCode> {
             }
         }
     }
+    let mut cases = 0;
+    for a in catalog.adversarial() {
+        let dir = root.join("fixtures").join(a.name.as_str());
+        for (name, case) in scenarios.cases(a.name.as_str()) {
+            cases += 1;
+            let Err(e) = scenario::plan(&case.edits, |p| scenario::read_in(&dir, p)) else {
+                continue;
+            };
+            problems.push(format!("{}/{name}: {e}", a.name));
+        }
+    }
     let drift = workflow::sync(root, &catalog, false)?;
     problems.extend(
         drift
@@ -120,9 +144,10 @@ fn validate(root: &std::path::Path) -> anyhow::Result<ExitCode> {
     );
     problems.iter().for_each(|p| eprintln!("ci-bench: {p}"));
     println!(
-        "{} fixtures, {} scenarios each, {} problems",
+        "{} fixtures, {} scenarios each; {} adversarial fixtures, {cases} cases; {} problems",
         catalog.fixtures().len(),
         ScenarioName::SCRIPTED.len(),
+        catalog.adversarial().len(),
         problems.len()
     );
     Ok(if problems.is_empty() {
@@ -145,6 +170,10 @@ async fn run(root: &std::path::Path, args: RunArgs) -> anyhow::Result<ExitCode> 
         args.fixtures
             .iter()
             .map(|f| {
+                anyhow::ensure!(
+                    catalog.adversarial_fixture(f).is_none(),
+                    "{f} is an adversarial fixture: only arms that select tests run its cases"
+                );
                 catalog
                     .fixture(f)
                     .map(|f| f.name.clone())
@@ -231,6 +260,77 @@ async fn run(root: &std::path::Path, args: RunArgs) -> anyhow::Result<ExitCode> 
     })
 }
 
+async fn check_corpus(
+    root: &std::path::Path,
+    fixtures: &[String],
+    cases: &[String],
+    timeout: std::time::Duration,
+) -> anyhow::Result<ExitCode> {
+    let (catalog, scenarios, _) = load(root)?;
+    let chosen: Vec<_> = if fixtures.is_empty() {
+        catalog.adversarial().iter().collect()
+    } else {
+        fixtures
+            .iter()
+            .map(|f| {
+                catalog
+                    .adversarial_fixture(f)
+                    .with_context(|| format!("no adversarial fixture {f}"))
+            })
+            .collect::<anyhow::Result<_>>()?
+    };
+    let unknown: Vec<&String> = cases
+        .iter()
+        .filter(|c| {
+            !chosen
+                .iter()
+                .any(|f| scenarios.case(f.name.as_str(), c).is_some())
+        })
+        .collect();
+    anyhow::ensure!(unknown.is_empty(), "no such cases: {unknown:?}");
+    let scratch =
+        std::env::temp_dir().join(format!("ci-bench-corpus-{}", uuid::Uuid::now_v7().simple()));
+    std::fs::create_dir(&scratch).with_context(|| format!("creating {}", scratch.display()))?;
+    let mut broken = 0;
+    let mut checked = 0;
+    for fixture in chosen {
+        let name = fixture.name.as_str();
+        let picked: Vec<_> = scenarios
+            .cases(name)
+            .filter(|(c, _)| cases.is_empty() || cases.iter().any(|w| w == c.as_str()))
+            .collect();
+        let outcomes = corpus::Check {
+            fixture,
+            source: &root.join("fixtures").join(name),
+            scratch: &scratch,
+            timeout,
+        }
+        .run(&picked)
+        .await;
+        for o in outcomes {
+            let at = o
+                .case
+                .as_ref()
+                .map_or_else(|| name.to_owned(), |c| format!("{name}/{c}"));
+            checked += usize::from(o.case.is_some());
+            match o.result {
+                Ok(what) => println!("ok      {at}: {what}"),
+                Err(why) => {
+                    broken += 1;
+                    println!("BROKEN  {at}: {why}");
+                }
+            }
+        }
+    }
+    std::fs::remove_dir_all(&scratch).with_context(|| format!("removing {}", scratch.display()))?;
+    println!("{checked} cases checked, {broken} broken");
+    Ok(if broken == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
 async fn dispatch(args: Args) -> anyhow::Result<ExitCode> {
     match args.command {
         Command::Validate => validate(&args.root),
@@ -251,11 +351,19 @@ async fn dispatch(args: Args) -> anyhow::Result<ExitCode> {
         } => {
             let (_, scenarios, _) = load(&args.root)?;
             let edits = scenarios
-                .edits(&fixture, name)
-                .with_context(|| format!("no fixture {fixture}"))?;
+                .edits_named(&fixture, &name)
+                .with_context(|| format!("no scenario {name} of fixture {fixture}"))?;
             let changes = scenario::apply_dir(&dir, edits)?;
             changes.iter().for_each(|c| println!("{}", c.path()));
             Ok(ExitCode::SUCCESS)
+        }
+        Command::Corpus {
+            fixtures,
+            cases,
+            timeout,
+        } => {
+            let timeout = std::time::Duration::from_secs(timeout);
+            check_corpus(&args.root, &fixtures, &cases, timeout).await
         }
         Command::Run(a) => run(&args.root, *a).await,
     }
