@@ -1,0 +1,27 @@
+{
+  "name": "adv-node",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ci-bench's adversarial Vitest fixture (synthetic): see scenarios.toml, class \"adversarial\".",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#internal/*": "./src/internal/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@adv/cli": "workspace:*",
+    "@adv/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "^5.9.0",
+    "vite-tsconfig-paths": "^5.1.0",
+    "vitest": "^4.0.0",
+    "vue": "^3.5.0"
+  },
+  "packageManager": "pnpm@10.34.8"
+}

@@ -1,0 +1,9 @@
+[package]
+name = "adv-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+adv-core = { path = "../core" }

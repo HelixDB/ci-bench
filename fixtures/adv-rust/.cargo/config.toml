@@ -1,0 +1,3 @@
+# Read by adv-core's unit tests (`env!("ADV_CHANNEL")`).
+[env]
+ADV_CHANNEL = "stable"

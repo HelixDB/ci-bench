@@ -89,3 +89,51 @@ commit = "3ae618c745df5b87053ad91588c72a4c8e646853"
 license = "BSD-3-Clause"
 install = "python3 -m venv .venv && .venv/bin/python -m pip install -e . tblib"
 test = "env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/runtests.py --parallel"
+
+# ---------------------------------------------------------------- the adversarial corpus
+# Small synthetic projects of ci-bench's own (MIT, like the driver), named adv-<language>: their
+# cases (scenarios.toml, class "adversarial") probe affected-test selection, so only arms that
+# select tests run them; no workflow does and `run` refuses them. Besides `install` and `test`
+# (the whole suite), each says how to run one unit alone (`only`) and every unit but one
+# (`except`), the unit in $UNIT, named as the runner names it: a nextest binary id, a Go import
+# path, a test file's path in the fixture. `ci-bench corpus` checks every case with them.
+
+[[adversarial]]
+name = "adv-rust"
+toolchain = "rust"
+install = "cargo test --workspace --locked --no-run"
+test = "cargo nextest run --workspace --locked --no-fail-fast"
+only = "cargo nextest run --workspace --locked --no-fail-fast -E \"binary_id(=$UNIT)\""
+except = "cargo nextest run --workspace --locked --no-fail-fast -E \"not binary_id(=$UNIT)\""
+
+[[adversarial]]
+name = "adv-go"
+toolchain = "go"
+install = "go mod download && go test -run '^$' ./..."
+test = "go test ./..."
+only = "go test \"$UNIT\""
+except = "go test $(go list ./... | grep -vxF \"$UNIT\")"
+
+[[adversarial]]
+name = "adv-node"
+toolchain = "node_pnpm"
+install = "pnpm install --frozen-lockfile"
+test = "pnpm exec vitest run"
+only = "pnpm exec vitest run \"$UNIT\""
+except = "pnpm exec vitest run --exclude \"$UNIT\""
+
+[[adversarial]]
+name = "adv-jest"
+toolchain = "node_pnpm"
+install = "pnpm install --frozen-lockfile"
+test = "pnpm exec jest --ci"
+only = "pnpm exec jest --ci --runTestsByPath \"$UNIT\""
+except = "pnpm exec jest --ci --testPathIgnorePatterns \"$UNIT\""
+
+[[adversarial]]
+name = "adv-python"
+toolchain = "python_uv"
+install = "uv sync --locked"
+test = "uv run --locked pytest"
+only = "uv run --locked pytest \"$UNIT\""
+except = "uv run --locked pytest --ignore=\"$UNIT\""
