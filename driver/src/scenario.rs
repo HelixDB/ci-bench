@@ -1,6 +1,9 @@
 //! `scenarios.toml`: scripted agent diffs and how they apply.
 //!
-//! A scenario is a list of [`Edit`]s on a pristine fixture. [`plan`] turns edits into
+//! A scenario is a list of [`Edit`]s on a pristine fixture: a benchmark class
+//! ([`ScenarioName`]) of every benchmark fixture, or an adversarial [`Case`] of an adversarial
+//! fixture (`class = "adversarial"`), which says what an arm that selects tests must do with it
+//! ([`Expect`]). [`plan`] turns edits into
 //! [`Change`]s (a path's new content, or its removal) from a reader of the current files, so
 //! the same function serves a local checkout ([`apply_dir`]) and the GitHub Git Data API (the
 //! driver commits the changes on a branch without a clone). Every precondition is checked
@@ -181,6 +184,177 @@ impl fmt::Display for RelPath {
     }
 }
 
+/// An adversarial case's name: `[a-z][a-z0-9_]`, 1..=40 bytes, and never a benchmark class's
+/// name (so `apply --scenario` names either unambiguously).
+///
+/// ```
+/// use ci_bench::scenario::CaseName;
+/// assert_eq!("include_str".parse::<CaseName>().unwrap().as_str(), "include_str");
+/// for bad in ["", "Leaf", "leaf", "a-b", "_a", "1a", &"a".repeat(41)] {
+///     assert!(bad.parse::<CaseName>().is_err(), "{bad}");
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CaseName(String);
+
+impl CaseName {
+    /// The name.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for CaseName {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        let valid = (1..=40).contains(&s.len())
+            && s.starts_with(|c: char| c.is_ascii_lowercase())
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            && s.parse::<ScenarioName>().is_err();
+        if valid {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(format!(
+                "{s:?} is not a case name ([a-z][a-z0-9_]{{0,39}}, not a benchmark class)"
+            ))
+        }
+    }
+}
+
+impl fmt::Display for CaseName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A test unit as the adversarial fixture's runner names it
+/// ([`crate::catalog::Adversarial`]): 1..=200 bytes, none of them whitespace, a control
+/// character, a quote, `$` or a backtick.
+///
+/// ```
+/// use ci_bench::scenario::Unit;
+/// for good in ["adv-core::greeting", "example.com/adv/render", "test/alias.test.ts"] {
+///     assert!(good.parse::<Unit>().is_ok(), "{good}");
+/// }
+/// for bad in ["", "a b", "a\tb", "$(x)", "a'b", "a`b"] {
+///     assert!(bad.parse::<Unit>().is_err(), "{bad}");
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Unit(String);
+
+impl Unit {
+    /// The name.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for Unit {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        let valid = (1..=200).contains(&s.len())
+            && !s.chars().any(|c| {
+                c.is_whitespace() || c.is_control() || matches!(c, '\'' | '"' | '$' | '`')
+            });
+        if valid {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(format!("{s:?} is not a unit name"))
+        }
+    }
+}
+
+impl TryFrom<String> for Unit {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> {
+        s.parse()
+    }
+}
+
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Why a selection runs every unit for a change. The names are those of Crucible's
+/// `proto::skip::Why` (snake case), the selecting arm the corpus was written for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Why {
+    /// A changed path is an input of every unit: a lockfile, a manifest, toolchain or runner
+    /// configuration, a file the runner's configuration loads.
+    Global,
+    /// A changed path is in no unit's graph: test data, a build script's input.
+    Unmapped,
+    /// An added path may shadow a module (`a.rs` beside `a/mod.rs`, `a.ts` beside
+    /// `a/index.ts`, `a.py` beside the package `a/`).
+    Shadowing,
+}
+
+impl Why {
+    /// The name as written in `scenarios.toml`.
+    ///
+    /// ```
+    /// assert_eq!(ci_bench::scenario::Why::Unmapped.as_str(), "unmapped");
+    /// ```
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Unmapped => "unmapped",
+            Self::Shadowing => "shadowing",
+        }
+    }
+}
+
+/// What an arm that selects tests must do with an adversarial case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expect {
+    /// The job fails (`expect = "fail"`): a selection that skips `breaks` is a wrong green.
+    Fail {
+        /// The one unit the change breaks; `None` when it breaks the build instead.
+        breaks: Option<Unit>,
+        /// Why a selection is expected to run everything here: reported, not required (a
+        /// selection precise enough to run `breaks` is sound too).
+        why: Option<Why>,
+    },
+    /// A known limit (`expect = "fail"`, `limit = true`): the change breaks `breaks` through a
+    /// dependency no static graph sees (one package running another's binary), so a selecting
+    /// arm may pass it. Reported, never counted as a wrong green.
+    Limit {
+        /// The unit the change breaks.
+        breaks: Unit,
+    },
+    /// The job passes having run fewer units than the suite has (`expect = "pass"`), so an arm
+    /// whose selection is always off cannot pass it.
+    Pass,
+    /// The selection runs every unit for `why` (`expect = "full"`); the suite stays green.
+    Full {
+        /// The reason the arm must give.
+        why: Why,
+    },
+}
+
+/// One adversarial case of a fixture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Case {
+    /// What the agent changes (a case that breaks a unit also makes a harmless edit to the
+    /// fixture's leaf, so a selection that loses track of the break still selects something
+    /// and cannot fall back to running everything).
+    pub edits: Vec<Edit>,
+    /// What a selecting arm must do with it.
+    pub expect: Expect,
+}
+
+/// The case every adversarial fixture has: a harmless edit of its leaf, expecting `pass`.
+pub const LEAF_PASS: &str = "leaf_pass";
+
 /// One edit, its snippets resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
@@ -234,12 +408,67 @@ struct RawEdit {
     snippet: Option<String>,
 }
 
+/// Which arms run a scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawClass {
+    /// A benchmark class of a benchmark fixture: every arm runs it.
+    #[default]
+    Benchmark,
+    /// A case of an adversarial fixture: arms that select tests run it.
+    Adversarial,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawExpect {
+    Fail,
+    Pass,
+    Full,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawScenario {
     fixture: FixtureName,
-    name: ScenarioName,
+    name: String,
+    #[serde(default)]
+    class: RawClass,
+    expect: Option<RawExpect>,
+    breaks: Option<Unit>,
+    why: Option<Why>,
+    limit: Option<bool>,
     edits: Vec<RawEdit>,
+}
+
+impl RawScenario {
+    /// Whether it sets a field only adversarial cases have.
+    const fn has_case_fields(&self) -> bool {
+        self.expect.is_some() || self.breaks.is_some() || self.why.is_some() || self.limit.is_some()
+    }
+
+    /// The case's expectation from `expect`, `breaks`, `why` and `limit`.
+    fn expect(&self) -> Result<Expect, &'static str> {
+        match (
+            self.expect,
+            &self.breaks,
+            self.why,
+            self.limit.unwrap_or(false),
+        ) {
+            (Some(RawExpect::Fail), breaks, why, false) => Ok(Expect::Fail {
+                breaks: breaks.clone(),
+                why,
+            }),
+            (Some(RawExpect::Fail), Some(breaks), None, true) => Ok(Expect::Limit {
+                breaks: breaks.clone(),
+            }),
+            (Some(RawExpect::Pass), None, None, false) => Ok(Expect::Pass),
+            (Some(RawExpect::Full), None, Some(why), false) => Ok(Expect::Full { why }),
+            _ => Err(
+                "a case expects fail (breaks and why optional; with limit = true, breaks and nothing else), pass (nothing else) or full (with why, no breaks)",
+            ),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -264,6 +493,8 @@ pub enum ScenarioError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scenarios {
     edits: BTreeMap<(FixtureName, ScenarioName), Vec<Edit>>,
+    /// In file order.
+    cases: Vec<(FixtureName, CaseName, Case)>,
 }
 
 fn edit(raw: RawEdit, snippets: &BTreeMap<String, String>) -> Result<Edit, String> {
@@ -341,8 +572,11 @@ fn edit(raw: RawEdit, snippets: &BTreeMap<String, String>) -> Result<Edit, Strin
 
 impl Scenarios {
     /// Parses and checks the file against `catalog`: every scenario names a fixture of the
-    /// catalogue and is unique, every fixture has every scripted class, `baseline` is never
-    /// scripted, every edit is well formed and its snippet exists.
+    /// catalogue and is unique, every benchmark fixture has every scripted class, `baseline` is
+    /// never scripted, every edit is well formed and its snippet exists. A case
+    /// (`class = "adversarial"`) names an adversarial fixture and a [`CaseName`], has edits and
+    /// one [`Expect`]; every adversarial fixture has the case [`LEAF_PASS`], expecting `pass`.
+    /// Only cases have `expect`, `breaks`, `why` and `limit`.
     ///
     /// ```
     /// use ci_bench::{catalog, scenario};
@@ -351,6 +585,9 @@ impl Scenarios {
     /// assert_eq!(all.edits("go-small", scenario::ScenarioName::Baseline), Some(&[][..]));
     /// assert_eq!(all.edits("go-small", scenario::ScenarioName::Leaf).unwrap().len(), 1);
     /// assert_eq!(all.edits("nope", scenario::ScenarioName::Leaf), None);
+    /// assert_eq!(all.case("adv-go", "leaf_pass").unwrap().expect, scenario::Expect::Pass);
+    /// assert_eq!(all.edits("adv-go", scenario::ScenarioName::Leaf), None, "no benchmark classes");
+    /// assert!(all.cases("go-small").next().is_none(), "no cases");
     /// ```
     ///
     /// # Errors
@@ -358,24 +595,65 @@ impl Scenarios {
     pub fn parse(text: &str, catalog: &Catalog) -> Result<Self, ScenarioError> {
         let raw: RawFile = toml::from_str(text)?;
         let mut edits = BTreeMap::new();
+        let mut cases: Vec<(FixtureName, CaseName, Case)> = Vec::new();
         for s in raw.scenario {
             let at = format!("{}/{}", s.fixture, s.name);
-            if catalog.fixture(s.fixture.as_str()).is_none() {
-                return Err(ScenarioError::Invalid(format!("{at}: no such fixture")));
-            }
-            if s.name.unedited() || s.edits.is_empty() {
-                return Err(ScenarioError::Invalid(format!(
-                    "{at}: baseline and cold are implicit and a scripted scenario has edits"
-                )));
-            }
-            let list = s
-                .edits
-                .into_iter()
-                .map(|e| edit(e, &raw.snippets))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|why| ScenarioError::Invalid(format!("{at}: {why}")))?;
-            if edits.insert((s.fixture, s.name), list).is_some() {
-                return Err(ScenarioError::Invalid(format!("{at}: defined twice")));
+            let invalid = |why: &str| ScenarioError::Invalid(format!("{at}: {why}"));
+            let resolve = |list: Vec<RawEdit>| {
+                list.into_iter()
+                    .map(|e| edit(e, &raw.snippets))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|why| invalid(&why))
+            };
+            match s.class {
+                RawClass::Benchmark => {
+                    if catalog.fixture(s.fixture.as_str()).is_none() {
+                        return Err(invalid(
+                            if catalog.adversarial_fixture(s.fixture.as_str()).is_some() {
+                                "an adversarial fixture's scenarios are class = \"adversarial\""
+                            } else {
+                                "no such fixture"
+                            },
+                        ));
+                    }
+                    if s.has_case_fields() {
+                        return Err(invalid(
+                            "expect, breaks, why and limit are adversarial cases' fields",
+                        ));
+                    }
+                    let name: ScenarioName = s.name.parse().map_err(|why: String| invalid(&why))?;
+                    if name.unedited() || s.edits.is_empty() {
+                        return Err(invalid(
+                            "baseline and cold are implicit and a scripted scenario has edits",
+                        ));
+                    }
+                    let list = resolve(s.edits)?;
+                    if edits.insert((s.fixture, name), list).is_some() {
+                        return Err(invalid("defined twice"));
+                    }
+                }
+                RawClass::Adversarial => {
+                    if catalog.adversarial_fixture(s.fixture.as_str()).is_none() {
+                        return Err(invalid("no such adversarial fixture"));
+                    }
+                    let name: CaseName = s.name.parse().map_err(|why: String| invalid(&why))?;
+                    if s.edits.is_empty() {
+                        return Err(invalid("a case has edits"));
+                    }
+                    let expect = s.expect().map_err(invalid)?;
+                    if cases.iter().any(|(f, n, _)| *f == s.fixture && *n == name) {
+                        return Err(invalid("defined twice"));
+                    }
+                    let list = resolve(s.edits)?;
+                    cases.push((
+                        s.fixture,
+                        name,
+                        Case {
+                            edits: list,
+                            expect,
+                        },
+                    ));
+                }
             }
         }
         let missing: Vec<String> = catalog
@@ -384,6 +662,17 @@ impl Scenarios {
             .flat_map(|f| ScenarioName::SCRIPTED.map(|n| (f.name.clone(), n)))
             .filter(|key| !edits.contains_key(key))
             .map(|(f, n)| format!("{f}/{n}"))
+            .chain(
+                catalog
+                    .adversarial()
+                    .iter()
+                    .filter(|a| {
+                        !cases.iter().any(|(f, n, c)| {
+                            *f == a.name && n.as_str() == LEAF_PASS && c.expect == Expect::Pass
+                        })
+                    })
+                    .map(|a| format!("{}/{LEAF_PASS} (expecting pass)", a.name)),
+            )
             .collect();
         if !missing.is_empty() {
             return Err(ScenarioError::Invalid(format!(
@@ -391,11 +680,11 @@ impl Scenarios {
                 missing.join(", ")
             )));
         }
-        Ok(Self { edits })
+        Ok(Self { edits, cases })
     }
 
     /// The edits of `scenario` on `fixture` (empty for `baseline` and `cold`), or `None` for an
-    /// unknown fixture.
+    /// unknown fixture (adversarial fixtures have no benchmark classes).
     #[must_use]
     pub fn edits(&self, fixture: &str, scenario: ScenarioName) -> Option<&[Edit]> {
         if scenario.unedited() {
@@ -409,6 +698,42 @@ impl Scenarios {
             .iter()
             .find(|((f, n), _)| f.as_str() == fixture && *n == scenario)
             .map(|(_, e)| e.as_slice())
+    }
+
+    /// The cases of `fixture`, in file order (none for a benchmark fixture).
+    pub fn cases(&self, fixture: &str) -> impl Iterator<Item = (&CaseName, &Case)> {
+        self.cases
+            .iter()
+            .filter(move |(f, ..)| f.as_str() == fixture)
+            .map(|(_, n, c)| (n, c))
+    }
+
+    /// The case `name` of `fixture`.
+    #[must_use]
+    pub fn case(&self, fixture: &str, name: &str) -> Option<&Case> {
+        self.cases(fixture)
+            .find(|(n, _)| n.as_str() == name)
+            .map(|(_, c)| c)
+    }
+
+    /// The edits of the scenario `name` of `fixture`, a benchmark class's name or a case's
+    /// (what `apply --scenario` takes).
+    ///
+    /// ```
+    /// use ci_bench::{catalog, scenario};
+    /// let catalog = catalog::Catalog::parse(catalog::FIXTURES_TOML).unwrap();
+    /// let all = scenario::Scenarios::parse(scenario::SCENARIOS_TOML, &catalog).unwrap();
+    /// assert!(all.edits_named("go-small", "leaf").is_some());
+    /// assert!(all.edits_named("adv-go", "leaf_pass").is_some());
+    /// assert!(all.edits_named("adv-go", "leaf").is_none());
+    /// assert!(all.edits_named("go-small", "leaf_pass").is_none());
+    /// ```
+    #[must_use]
+    pub fn edits_named(&self, fixture: &str, name: &str) -> Option<&[Edit]> {
+        match name.parse::<ScenarioName>() {
+            Ok(class) => self.edits(fixture, class),
+            Err(_) => self.case(fixture, name).map(|c| c.edits.as_slice()),
+        }
     }
 }
 
@@ -626,6 +951,18 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
     }
 
+    /// Edited files stay regular, non-executable files (the API path writes 100644).
+    fn assert_regular(dir: &Path, at: &str, changes: &[Change]) {
+        for c in changes {
+            let Ok(meta) = std::fs::symlink_metadata(dir.join(c.path().as_str())) else {
+                continue;
+            };
+            assert!(meta.is_file(), "{at}: {} is a file", c.path());
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(meta.permissions().mode() & 0o111, 0, "{at}: {}", c.path());
+        }
+    }
+
     #[test]
     fn every_checked_in_scenario_applies_to_its_vendored_fixture() {
         let catalog = Catalog::parse(FIXTURES_TOML).unwrap();
@@ -637,14 +974,40 @@ mod tests {
                 let changes = plan(edits, |path| read_in(&dir, path))
                     .unwrap_or_else(|e| panic!("{}/{name}: {e}", f.name));
                 assert!(!changes.is_empty());
-                // Edited files stay regular, non-executable files (the API path writes 100644).
-                for c in &changes {
-                    let Ok(meta) = std::fs::symlink_metadata(dir.join(c.path().as_str())) else {
-                        continue;
-                    };
-                    assert!(meta.is_file(), "{}/{name}: {} is a file", f.name, c.path());
-                    use std::os::unix::fs::PermissionsExt as _;
-                    assert_eq!(meta.permissions().mode() & 0o111, 0, "{}", c.path());
+                assert_regular(&dir, &format!("{}/{name}", f.name), &changes);
+            }
+        }
+        for a in catalog.adversarial() {
+            let dir = fixtures_dir().join(a.name.as_str());
+            let cases: Vec<_> = all.cases(a.name.as_str()).collect();
+            assert!(
+                cases.len() > 1,
+                "{}: leaf_pass and at least one probe",
+                a.name
+            );
+            for (name, case) in cases {
+                let at = format!("{}/{name}", a.name);
+                let changes = plan(&case.edits, |path| read_in(&dir, path))
+                    .unwrap_or_else(|e| panic!("{at}: {e}"));
+                assert!(!changes.is_empty(), "{at}");
+                assert_regular(&dir, &at, &changes);
+            }
+        }
+    }
+
+    #[test]
+    fn every_breaking_case_also_edits_its_leaf() {
+        let catalog = Catalog::parse(FIXTURES_TOML).unwrap();
+        let all = Scenarios::parse(SCENARIOS_TOML, &catalog).unwrap();
+        for a in catalog.adversarial() {
+            let fixture = a.name.as_str();
+            let leaf = &all.case(fixture, LEAF_PASS).unwrap().edits;
+            for (name, case) in all.cases(fixture) {
+                if matches!(case.expect, Expect::Fail { .. } | Expect::Limit { .. }) {
+                    assert!(
+                        leaf.iter().all(|e| case.edits.contains(e)),
+                        "{fixture}/{name} makes the leaf edit of {LEAF_PASS}"
+                    );
                 }
             }
         }
@@ -802,6 +1165,11 @@ mod tests {
         let scenario = |fixture: &str, name: &str, edits: &str| {
             format!("[[scenario]]\nfixture = \"{fixture}\"\nname = \"{name}\"\nedits = [{edits}]\n")
         };
+        let case = |fixture: &str, name: &str, fields: &str| {
+            format!(
+                "[[scenario]]\nfixture = \"{fixture}\"\nname = \"{name}\"\nclass = \"adversarial\"\n{fields}edits = [{{ delete = \"a\" }}]\n"
+            )
+        };
         let complete: String = catalog
             .fixtures()
             .iter()
@@ -809,6 +1177,12 @@ mod tests {
                 ScenarioName::SCRIPTED
                     .map(|n| scenario(f.name.as_str(), n.as_str(), "{ delete = \"a\" }"))
             })
+            .chain(
+                catalog
+                    .adversarial()
+                    .iter()
+                    .map(|a| case(a.name.as_str(), LEAF_PASS, "expect = \"pass\"\n")),
+            )
             .collect();
         assert!(Scenarios::parse(&format!("{head}{complete}"), &catalog).is_ok());
         let err = |extra: &str| {
@@ -847,6 +1221,110 @@ mod tests {
         assert!(
             err(&scenario("go-small", "leaf", "{ delete = \"../a\" }")).contains("relative path")
         );
+        // Adversarial cases.
+        let fail = "expect = \"fail\"\n";
+        let parsed = Scenarios::parse(
+            &format!(
+                "{head}{complete}{}{}{}{}",
+                case(
+                    "adv-go",
+                    "a",
+                    &format!("{fail}breaks = \"example.com/adv/x\"\nwhy = \"unmapped\"\n")
+                ),
+                case("adv-go", "b", fail),
+                case(
+                    "adv-go",
+                    "c",
+                    &format!("{fail}limit = true\nbreaks = \"u\"\n")
+                ),
+                case("adv-go", "d", "expect = \"full\"\nwhy = \"global\"\n"),
+            ),
+            &catalog,
+        )
+        .unwrap();
+        let expects: Vec<&Expect> = parsed.cases("adv-go").map(|(_, c)| &c.expect).collect();
+        let unit = |s: &str| Unit(s.to_owned());
+        assert_eq!(
+            expects,
+            [
+                &Expect::Pass,
+                &Expect::Fail {
+                    breaks: Some(unit("example.com/adv/x")),
+                    why: Some(Why::Unmapped)
+                },
+                &Expect::Fail {
+                    breaks: None,
+                    why: None
+                },
+                &Expect::Limit { breaks: unit("u") },
+                &Expect::Full { why: Why::Global },
+            ]
+        );
+        assert_eq!(
+            parsed.edits_named("adv-go", "d"),
+            Some(&[Edit::Delete { path: p("a") }][..])
+        );
+        for bad in [
+            "",
+            "expect = \"pass\"\nbreaks = \"u\"\n",
+            "expect = \"pass\"\nwhy = \"global\"\n",
+            "expect = \"full\"\n",
+            "expect = \"full\"\nwhy = \"global\"\nbreaks = \"u\"\n",
+            "expect = \"fail\"\nlimit = true\n",
+            "expect = \"fail\"\nlimit = true\nbreaks = \"u\"\nwhy = \"global\"\n",
+            "expect = \"pass\"\nlimit = true\n",
+            "expect = \"full\"\nwhy = \"global\"\nlimit = false\nbreaks = \"u\"\n",
+        ] {
+            assert!(
+                err(&case("adv-go", "x", bad)).contains("a case expects"),
+                "{bad}"
+            );
+        }
+        assert!(
+            err(&case(
+                "adv-go",
+                "x",
+                "expect = \"fail\"\nbreaks = \"a b\"\n"
+            ))
+            .contains("not a unit")
+        );
+        assert!(
+            err(&case("adv-go", "x", "expect = \"fail\"\nwhy = \"plan\"\n"))
+                .contains("unknown variant")
+        );
+        assert!(err(&case("adv-go", LEAF_PASS, fail)).contains("defined twice"));
+        assert!(err(&case("adv-go", "leaf", fail)).contains("not a case name"));
+        assert!(err(&case("go-small", "x", fail)).contains("no such adversarial fixture"));
+        assert!(
+            err(&scenario("adv-go", "leaf", "{ delete = \"a\" }"))
+                .contains("class = \"adversarial\"")
+        );
+        assert!(
+            err("[[scenario]]\nfixture = \"go-small\"\nname = \"leaf\"\nwhy = \"global\"\nedits = []\n")
+                .contains("adversarial cases' fields")
+        );
+        assert!(
+            err("[[scenario]]\nfixture = \"adv-go\"\nname = \"x\"\nclass = \"adversarial\"\nexpect = \"pass\"\nedits = []\n")
+                .contains("a case has edits")
+        );
+        assert!(
+            err(&case("adv-go", "x", "expect = \"pass\"\n")
+                .replace("delete = \"a\"", "append = \"a\", snippet = \"q\""))
+            .contains("no snippet")
+        );
+        // Every adversarial fixture has leaf_pass, expecting pass.
+        let without_leaf = complete.replace(
+            &case("adv-go", LEAF_PASS, "expect = \"pass\"\n"),
+            &case("adv-go", LEAF_PASS, "expect = \"full\"\nwhy = \"global\"\n"),
+        );
+        let missing = Scenarios::parse(&format!("{head}{without_leaf}"), &catalog)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains("missing scenarios: adv-go/leaf_pass (expecting pass)"),
+            "{missing}"
+        );
+
         let partial: String = complete.lines().skip(4).map(|l| format!("{l}\n")).collect();
         let missing = Scenarios::parse(&format!("{head}{partial}"), &catalog)
             .unwrap_err()
