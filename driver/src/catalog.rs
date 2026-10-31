@@ -4,6 +4,11 @@
 //! run with bash in that directory on every runner, after the setup and cache steps its
 //! [`Toolchain`] names. [`Runner`] is the closed set of competitor runners: the four workflows
 //! are identical but for `runs-on`.
+//!
+//! An [`Adversarial`] fixture (`fixtures/adv-<language>`) is a small synthetic project of
+//! ci-bench's own (MIT) whose cases probe affected-test selection (`scenarios.toml`, class
+//! `adversarial`; [`crate::corpus`]). It is no benchmark: no workflow runs it, `run` refuses it,
+//! and only arms that select tests run its cases.
 
 use std::fmt;
 use std::path::Path;
@@ -154,11 +159,38 @@ pub struct Fixture {
     pub test: String,
 }
 
+/// One adversarial fixture (module docs): the commands that install it, run its whole suite,
+/// and run one unit alone or every unit but one. A unit is named as the runner names it: a
+/// nextest binary id (`adv-core::greeting`), a Go import path, a test file's path in the
+/// fixture (Vitest, Jest, pytest). `only` and `except` read it from the environment variable
+/// `UNIT`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Adversarial {
+    /// Its directory under `fixtures/` (`adv-…`).
+    pub name: FixtureName,
+    /// Its toolchain (the manifests it holds).
+    pub toolchain: Toolchain,
+    /// Dependencies and the build.
+    pub install: String,
+    /// The whole suite.
+    pub test: String,
+    /// Unit `$UNIT` alone.
+    pub only: String,
+    /// Every unit but `$UNIT`.
+    pub except: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Raw {
     fixture: Vec<Fixture>,
+    #[serde(default)]
+    adversarial: Vec<Adversarial>,
 }
+
+/// The prefix every adversarial fixture's name has, and no benchmark fixture's.
+pub const ADVERSARIAL_PREFIX: &str = "adv-";
 
 /// Licenses a fixture may have (permissive only).
 pub const PERMISSIVE: [&str; 6] = [
@@ -174,17 +206,28 @@ pub const PERMISSIVE: [&str; 6] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalog {
     fixtures: Vec<Fixture>,
+    adversarial: Vec<Adversarial>,
+}
+
+/// Whether `c` can be pasted into a workflow's or the corpus check's bash: one non-empty line
+/// without `${{`.
+fn command_ok(c: &str) -> bool {
+    !c.trim().is_empty() && !c.contains('\n') && !c.contains("${{")
 }
 
 impl Catalog {
     /// Parses and checks the catalogue: unique names, a 40-hex commit, a GitHub upstream, only
     /// permissive licenses, single-line commands without `${{` (they are pasted into the
-    /// workflow's bash `case`).
+    /// workflow's bash `case`). Adversarial fixtures are named `adv-…` (and benchmark fixtures
+    /// never are), their commands follow the same rule, and `only` and `except` name `$UNIT`.
     ///
     /// ```
     /// let catalog = ci_bench::catalog::Catalog::parse(ci_bench::catalog::FIXTURES_TOML).unwrap();
     /// assert_eq!(catalog.fixtures().len(), 8);
     /// assert!(catalog.fixture("go-small").is_some());
+    /// assert_eq!(catalog.adversarial().len(), 5);
+    /// assert!(catalog.adversarial_fixture("adv-go").is_some());
+    /// assert!(catalog.fixture("adv-go").is_none(), "no benchmark");
     /// let bad = r#"[[fixture]]
     /// name = "x"
     /// toolchain = "go"
@@ -209,6 +252,9 @@ impl Catalog {
             if raw.fixture[..i].iter().any(|g| g.name == f.name) {
                 return Err(invalid(f, "duplicate name"));
             }
+            if f.name.as_str().starts_with(ADVERSARIAL_PREFIX) {
+                return Err(invalid(f, "names starting adv- are adversarial fixtures'"));
+            }
             if f.commit.len() != 40 || !f.commit.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(invalid(f, "commit must be 40 hex digits"));
             }
@@ -226,13 +272,35 @@ impl Catalog {
             if !permissive {
                 return Err(invalid(f, "the license must be permissive"));
             }
-            let command_ok =
-                |c: &str| !c.trim().is_empty() && !c.contains('\n') && !c.contains("${{");
             if !command_ok(&f.install) || !command_ok(&f.test) {
                 return Err(invalid(
                     f,
                     "install and test must be single, non-empty lines without ${{",
                 ));
+            }
+        }
+        for (i, a) in raw.adversarial.iter().enumerate() {
+            let invalid = |why: &str| CatalogError::Invalid {
+                fixture: a.name.to_string(),
+                why: why.to_owned(),
+            };
+            if raw.adversarial[..i].iter().any(|b| b.name == a.name) {
+                return Err(invalid("duplicate name"));
+            }
+            if !a.name.as_str().starts_with(ADVERSARIAL_PREFIX) {
+                return Err(invalid("an adversarial fixture is named adv-…"));
+            }
+            let commands = [&a.install, &a.test, &a.only, &a.except].map(String::as_str);
+            if !commands.into_iter().all(command_ok) {
+                return Err(invalid(
+                    "install, test, only and except must be single, non-empty lines without ${{",
+                ));
+            }
+            if ![&a.only, &a.except]
+                .into_iter()
+                .all(|c| c.contains("$UNIT"))
+            {
+                return Err(invalid("only and except run the unit named by $UNIT"));
             }
         }
         if raw.fixture.is_empty() {
@@ -243,6 +311,7 @@ impl Catalog {
         }
         Ok(Self {
             fixtures: raw.fixture,
+            adversarial: raw.adversarial,
         })
     }
 
@@ -258,28 +327,43 @@ impl Catalog {
         self.fixtures.iter().find(|f| f.name.as_str() == name)
     }
 
-    /// Checks every fixture against `dir` (the repository's `fixtures/`): its directory exists,
-    /// holds its toolchain's manifests, and has no `.git` or `.github`.
+    /// Every adversarial fixture, in file order.
+    #[must_use]
+    pub fn adversarial(&self) -> &[Adversarial] {
+        &self.adversarial
+    }
+
+    /// The adversarial fixture named `name`.
+    #[must_use]
+    pub fn adversarial_fixture(&self, name: &str) -> Option<&Adversarial> {
+        self.adversarial.iter().find(|a| a.name.as_str() == name)
+    }
+
+    /// Checks every fixture, adversarial ones included, against `dir` (the repository's
+    /// `fixtures/`): its directory exists, holds its toolchain's manifests, and has no `.git` or
+    /// `.github`.
     ///
     /// # Errors
     /// Every problem found, one line each.
     pub fn check_dir(&self, dir: &Path) -> Result<(), Vec<String>> {
-        let problems: Vec<String> = self
+        let all = self
             .fixtures
             .iter()
-            .flat_map(|f| {
-                let root = dir.join(f.name.as_str());
-                let missing = f
-                    .toolchain
+            .map(|f| (&f.name, f.toolchain))
+            .chain(self.adversarial.iter().map(|a| (&a.name, a.toolchain)));
+        let problems: Vec<String> = all
+            .flat_map(|(name, toolchain)| {
+                let root = dir.join(name.as_str());
+                let missing = toolchain
                     .manifests()
                     .iter()
                     .filter(|m| !root.join(m).is_file())
-                    .map(|m| format!("{}: no {m}", f.name));
+                    .map(|m| format!("{name}: no {m}"));
                 let stray = [".git", ".github"]
                     .into_iter()
                     .filter(|d| root.join(d).exists())
-                    .map(|d| format!("{}: has {d} (vendored snapshots carry neither)", f.name));
-                let absent = (!root.is_dir()).then(|| format!("{}: no directory", f.name));
+                    .map(|d| format!("{name}: has {d} (vendored snapshots carry neither)"));
+                let absent = (!root.is_dir()).then(|| format!("{name}: no directory"));
                 absent
                     .into_iter()
                     .chain(missing)
@@ -499,6 +583,67 @@ mod tests {
         );
         assert!(Catalog::parse(&one("A", &sha, "MIT", "https://github.com/o/r", "x")).is_err());
         assert!(Catalog::parse("fixture = []").is_err(), "no fixtures");
+        assert!(
+            Catalog::parse(&format!("{good}extra = 1\n")).is_err(),
+            "unknown keys"
+        );
+    }
+
+    #[test]
+    fn adversarial_rules() {
+        let sha = "0".repeat(40);
+        let bench = |name: &str| {
+            format!(
+                "[[fixture]]\nname = \"{name}\"\ntoolchain = \"go\"\nupstream = \"https://github.com/o/r\"\ntag = \"v1\"\ncommit = \"{sha}\"\nlicense = \"MIT\"\ninstall = \"true\"\ntest = \"go test\"\n"
+            )
+        };
+        let adv = |name: &str, only: &str, except: &str| {
+            format!(
+                "[[adversarial]]\nname = \"{name}\"\ntoolchain = \"go\"\ninstall = \"true\"\ntest = \"go test ./...\"\nonly = '{only}'\nexcept = '{except}'\n"
+            )
+        };
+        let only = r#"go test "$UNIT""#;
+        let except = r#"go test $(go list ./... | grep -vxF "$UNIT")"#;
+        let good = format!("{}{}", bench("a"), adv("adv-a", only, except));
+        let catalog = Catalog::parse(&good).unwrap();
+        assert_eq!(catalog.fixtures().len(), 1);
+        assert_eq!(catalog.adversarial()[0].only, only);
+        assert!(catalog.fixture("adv-a").is_none());
+        assert!(catalog.adversarial_fixture("a").is_none());
+        let why = |text: &str| match Catalog::parse(text) {
+            Err(CatalogError::Invalid { why, .. }) => why,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            why(&format!("{good}{}", adv("adv-a", only, except))),
+            "duplicate name"
+        );
+        assert!(
+            why(&format!("{}{}", bench("adv-b"), adv("adv-a", only, except)))
+                .contains("adversarial")
+        );
+        assert!(why(&format!("{}{}", bench("a"), adv("b", only, except))).contains("named adv-"));
+        assert!(
+            why(&format!(
+                "{}{}",
+                bench("a"),
+                adv("adv-a", "go test ./...", except)
+            ))
+            .contains("$UNIT")
+        );
+        assert!(why(&format!("{}{}", bench("a"), adv("adv-a", only, "go test"))).contains("$UNIT"));
+        assert!(
+            why(&format!("{}{}", bench("a"), adv("adv-a", only, "  ")))
+                .contains("single, non-empty")
+        );
+        assert!(
+            why(&format!(
+                "{}{}",
+                bench("a"),
+                adv("adv-a", "${{ x }} $UNIT", except)
+            ))
+            .contains("single, non-empty")
+        );
         assert!(
             Catalog::parse(&format!("{good}extra = 1\n")).is_err(),
             "unknown keys"

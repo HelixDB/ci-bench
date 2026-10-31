@@ -16,6 +16,23 @@
 #   { rename = "from", to = "to" }                  a file moved, content unchanged
 #   { replace = "path", find = "text", snippet = "name" }  the one occurrence of `find` replaced
 # Snippets are below; a file is read and written as UTF-8 bytes, nothing else changes.
+#
+# Adversarial cases (`class = "adversarial"`, on the adv-* fixtures only; the end of this file)
+# probe affected-test selection. Only arms that select tests run them; each says what such an
+# arm must do with it:
+#   expect = "fail", breaks = "<unit>"   the job fails: a selection that skips <unit> (named as
+#                                        the fixture's runner names it) is a wrong green;
+#                                        without breaks, the change breaks the build
+#   expect = "fail", limit = true        a known limit (another package's binary run at test
+#                                        time): reported, never counted as a wrong green
+#   expect = "pass"                      the job passes running fewer units than the suite has
+#                                        (every fixture has `leaf_pass`)
+#   expect = "full", why = "<why>"       the selection runs every unit for <why>; the suite
+#                                        stays green
+# `why` on a fail case is the reason a selection is expected to run everything (reported, not
+# required). Every case that breaks a unit also edits the fixture's leaf harmlessly, so a
+# selection that loses track of the break still selects something and cannot fall back to
+# running everything. `ci-bench corpus` checks every case on local toolchains.
 
 [snippets]
 rust_fn = "\n#[allow(dead_code)]\nfn ci_bench_edit() -> u32 {\n    1\n}\n"
@@ -39,6 +56,58 @@ django_test = "\n\nclass CiBenchTestOnlyTests(SimpleTestCase):\n    def test_ci_
 django_added = "from django.test import SimpleTestCase\n\n\nclass CiBenchAddedTests(SimpleTestCase):\n    def test_ci_bench_added(self):\n        self.assertEqual(1 + 1, 2)\n"
 pyproject_tool = "\n[tool.ci-bench]\nscenario = \"trigger\"\n"
 docs_line = "\nci-bench: a documentation-only edit.\n"
+# The adversarial cases'.
+hash_comment = "\n# ci-bench: an edit that changes nothing\n"
+js_fn = "\nfunction ciBenchEdit() {\n  return 1\n}\n"
+empty = ""
+adv_howdy = "howdy"
+adv_gamma = "gamma"
+adv_times_three = "x * 3"
+adv_tool_2 = "adv-tool 2"
+adv_cli_2 = "adv-cli 2"
+adv_rust_util = "/// Shadows util/mod.rs.\npub fn capitalize(s: &str) -> String {\n    s.to_owned()\n}\n"
+adv_retries = "retries = 4"
+adv_go_template = "Notice: {{.Name}}.\n"
+adv_plum = "plum"
+adv_go_121 = "go 1.21"
+adv_hi = "hi, "
+adv_underscore = "'_'"
+adv_question = "?`"
+adv_four = "4"
+adv_things = "things"
+adv_hi_quoted = "'Hi'"
+adv_us = "'us'"
+adv_file_util = "export const kind = 'file'\n"
+adv_to_fixed_1 = "toFixed(1)"
+adv_epoch_1 = "=> 1"
+adv_pong_2 = "pong 2"
+adv_max_200 = "MAX = 200"
+adv_auto_import = '''export const sharedPlugins = [
+  {
+    // Auto-imports useCounter into the tests that call it without importing it.
+    name: 'ci-bench:auto-import',
+    enforce: 'pre' as const,
+    transform(code: string, id: string) {
+      if (!id.endsWith('.test.ts') || !code.includes('useCounter(') || code.includes('import { useCounter }')) {
+        return null
+      }
+      return `import { useCounter } from '/src/composables/useCounter.ts'\n${code}`
+    },
+  },
+]'''
+adv_dts = "\ndeclare const __ADV_BUILD__: string\n"
+adv_typecheck = "typecheck: { enabled: true, include: ['test/**/*.test-d.ts'], ignoreSourceErrors: true }"
+adv_jest_retries = "retries: 4"
+adv_jest_mock = "module.exports = { send: () => 'stub' }\n"
+adv_odd = "% 2 === 1"
+adv_usd = "\"USD\""
+adv_semicolon = "registry.register(\"csv\", \";\")"
+adv_jsn = "\".jsn\""
+adv_howdy_quoted = "\"howdy\""
+adv_usd_rate = "USD,1.2"
+adv_py_ext = "\"\"\"A module: it shadows the namespace package adv/ext.\"\"\"\n"
+adv_py_fixed_1 = ".1f"
+adv_django = "DJANGO_SETTINGS_MODULE = \"adv.settings\"\n"
 
 # ---------------------------------------------------------------- rust-small (semver)
 
@@ -375,3 +444,572 @@ edits = [{ delete = "tests/utils_tests/test_inspect.py" }]
 fixture = "python-large"
 name = "rename"
 edits = [{ rename = "tests/utils_tests/test_timesince.py", to = "tests/utils_tests/test_timesince_renamed.py" }]
+
+# ================================================================ the adversarial corpus
+# Each case is one agent diff of an adv-* fixture; the leaf edit at the end of a breaking case
+# is the harmless one (file header).
+
+# ---------------------------------------------------------------- adv-rust (cargo-nextest; units are binary ids)
+
+# A file include_str! embeds changes.
+[[scenario]]
+fixture = "adv-rust"
+name = "include_str"
+class = "adversarial"
+expect = "fail"
+breaks = "adv-core::greeting"
+edits = [
+  { replace = "crates/core/src/greeting.txt", find = "hello", snippet = "adv_howdy" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+# adv-report's test reads adv-core's test data at run time; adv-report depends on nothing.
+[[scenario]]
+fixture = "adv-rust"
+name = "fixture_read"
+class = "adversarial"
+expect = "fail"
+breaks = "adv-report::fixtures"
+why = "unmapped"
+edits = [
+  { replace = "crates/core/testdata/expected.txt", find = "beta", snippet = "adv_gamma" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+# util.rs added beside util/mod.rs: the module is defined twice, the build breaks. A warm
+# target/ hides it: rustc never read util.rs, so cargo's fingerprint rebuilds nothing.
+[[scenario]]
+fixture = "adv-rust"
+name = "shadowing"
+class = "adversarial"
+expect = "fail"
+why = "shadowing"
+edits = [
+  { create = "crates/core/src/util.rs", snippet = "adv_rust_util" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+# math.rs moves to math/mod.rs (`mod math;` still finds it, no importer changes) and changes.
+[[scenario]]
+fixture = "adv-rust"
+name = "rename_break"
+class = "adversarial"
+expect = "fail"
+breaks = "adv-app::math"
+edits = [
+  { rename = "crates/core/src/math.rs", to = "crates/core/src/math/mod.rs" },
+  { replace = "crates/core/src/math/mod.rs", find = "x * 2", snippet = "adv_times_three" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+[[scenario]]
+fixture = "adv-rust"
+name = "cargo_lock"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = "Cargo.lock", snippet = "hash_comment" }]
+
+# adv-gen's build script reads schema/values.txt, outside every package.
+[[scenario]]
+fixture = "adv-rust"
+name = "build_input"
+class = "adversarial"
+expect = "fail"
+breaks = "adv-gen::generated"
+why = "unmapped"
+edits = [
+  { replace = "schema/values.txt", find = "retries = 3", snippet = "adv_retries" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+[[scenario]]
+fixture = "adv-rust"
+name = "cargo_config"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = ".cargo/config.toml", snippet = "hash_comment" }]
+
+# adv-report's test runs adv-tool (`cargo run -p adv-tool`) without depending on it.
+[[scenario]]
+fixture = "adv-rust"
+name = "exec_bin"
+class = "adversarial"
+expect = "fail"
+limit = true
+breaks = "adv-report::exec"
+edits = [
+  { replace = "crates/tool/src/main.rs", find = "adv-tool 1", snippet = "adv_tool_2" },
+  { append = "crates/leaf/src/lib.rs", snippet = "rust_fn" },
+]
+
+[[scenario]]
+fixture = "adv-rust"
+name = "leaf_pass"
+class = "adversarial"
+expect = "pass"
+edits = [{ append = "crates/leaf/src/lib.rs", snippet = "rust_fn" }]
+
+# ---------------------------------------------------------------- adv-go (go test; units are import paths)
+
+# A file added under a //go:embed pattern: package render's test lists the embedded files.
+[[scenario]]
+fixture = "adv-go"
+name = "embed_added"
+class = "adversarial"
+expect = "fail"
+breaks = "example.com/adv/render"
+edits = [
+  { create = "assets/templates/notice.tmpl", snippet = "adv_go_template" },
+  { append = "leaf/leaf.go", snippet = "go_fn" },
+]
+
+# Package report's test reads package catalog's testdata; report does not import catalog.
+[[scenario]]
+fixture = "adv-go"
+name = "testdata_read"
+class = "adversarial"
+expect = "fail"
+breaks = "example.com/adv/report"
+edits = [
+  { replace = "catalog/testdata/items.json", find = "pear", snippet = "adv_plum" },
+  { append = "leaf/leaf.go", snippet = "go_fn" },
+]
+
+# The language version drops below 1.22: loop variables are shared again.
+[[scenario]]
+fixture = "adv-go"
+name = "go_mod"
+class = "adversarial"
+expect = "fail"
+breaks = "example.com/adv/loops"
+edits = [
+  { replace = "go.mod", find = "go 1.22", snippet = "adv_go_121" },
+  { append = "leaf/leaf.go", snippet = "go_fn" },
+]
+
+# Package cli's test runs `go run example.com/adv/cmd/tool`: Go's test cache cannot see it.
+[[scenario]]
+fixture = "adv-go"
+name = "go_run"
+class = "adversarial"
+expect = "fail"
+limit = true
+breaks = "example.com/adv/cli"
+edits = [
+  { replace = "cmd/tool/main.go", find = "adv-tool 1", snippet = "adv_tool_2" },
+  { append = "leaf/leaf.go", snippet = "go_fn" },
+]
+
+[[scenario]]
+fixture = "adv-go"
+name = "leaf_pass"
+class = "adversarial"
+expect = "pass"
+edits = [{ append = "leaf/leaf.go", snippet = "go_fn" }]
+
+# ---------------------------------------------------------------- adv-node (Vitest; units are test files)
+
+# `@lib/*` is a vite resolve.alias (create-vue's `new URL('./src/lib', import.meta.url)` form).
+[[scenario]]
+fixture = "adv-node"
+name = "vite_alias"
+class = "adversarial"
+expect = "fail"
+breaks = "test/alias.test.ts"
+edits = [
+  { replace = "src/lib/greet.ts", find = "hello, ", snippet = "adv_hi" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# `~paths/*` is a tsconfig path (vite-tsconfig-paths).
+[[scenario]]
+fixture = "adv-node"
+name = "tsconfig_paths"
+class = "adversarial"
+expect = "fail"
+breaks = "test/paths.test.ts"
+edits = [
+  { replace = "src/paths/slug.ts", find = "'-'", snippet = "adv_underscore" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# `@adv/shared` is a pnpm workspace package (exports its TypeScript source).
+[[scenario]]
+fixture = "adv-node"
+name = "workspace_package"
+class = "adversarial"
+expect = "fail"
+breaks = "test/workspace.test.ts"
+edits = [
+  { replace = "packages/shared/src/index.ts", find = "!`", snippet = "adv_question" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+[[scenario]]
+fixture = "adv-node"
+name = "json_import"
+class = "adversarial"
+expect = "fail"
+breaks = "test/json.test.ts"
+edits = [
+  { replace = "src/data/config.json", find = "3", snippet = "adv_four" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# The test renders Badge.vue, whose <script setup> imports format.ts.
+[[scenario]]
+fixture = "adv-node"
+name = "vue_sfc"
+class = "adversarial"
+expect = "fail"
+breaks = "test/badge.test.ts"
+edits = [
+  { replace = "src/format.ts", find = "items", snippet = "adv_things" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# The test imports `../src/locales/${lang}.ts`.
+[[scenario]]
+fixture = "adv-node"
+name = "template_import"
+class = "adversarial"
+expect = "fail"
+breaks = "test/locale.test.ts"
+edits = [
+  { replace = "src/locales/en.ts", find = "'Hello'", snippet = "adv_hi_quoted" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# Only test/setup.ts (vitest's setupFiles) imports setup-env.ts; test/region.test.ts reads the
+# global it sets.
+[[scenario]]
+fixture = "adv-node"
+name = "setup_files"
+class = "adversarial"
+expect = "fail"
+breaks = "test/region.test.ts"
+edits = [
+  { replace = "src/setup-env.ts", find = "'eu'", snippet = "adv_us" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# The test reads test/fixtures/data.txt at run time (a path built with join()).
+[[scenario]]
+fixture = "adv-node"
+name = "fs_read"
+class = "adversarial"
+expect = "fail"
+breaks = "test/fs.test.ts"
+why = "unmapped"
+edits = [
+  { replace = "test/fixtures/data.txt", find = "beta", snippet = "adv_gamma" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# util.ts added beside util/index.ts: `../src/util` now resolves to the file.
+[[scenario]]
+fixture = "adv-node"
+name = "shadowed_util"
+class = "adversarial"
+expect = "fail"
+breaks = "test/shadow.test.ts"
+why = "shadowing"
+edits = [
+  { create = "src/util.ts", snippet = "adv_file_util" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# money.ts moves to money/index.ts (`../src/money` still resolves, no importer changes) and
+# changes.
+[[scenario]]
+fixture = "adv-node"
+name = "rename_break"
+class = "adversarial"
+expect = "fail"
+breaks = "test/money.test.ts"
+edits = [
+  { rename = "src/money.ts", to = "src/money/index.ts" },
+  { replace = "src/money/index.ts", find = "toFixed(2)", snippet = "adv_to_fixed_1" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# `#internal/*` is a package.json `imports` subpath.
+[[scenario]]
+fixture = "adv-node"
+name = "internal_subpath"
+class = "adversarial"
+expect = "fail"
+breaks = "test/internal.test.ts"
+edits = [
+  { replace = "src/internal/clock.ts", find = "=> 0", snippet = "adv_epoch_1" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# The test starts `new Worker(new URL('../src/worker.mjs', import.meta.url))`.
+[[scenario]]
+fixture = "adv-node"
+name = "worker_url"
+class = "adversarial"
+expect = "fail"
+breaks = "test/worker.test.ts"
+edits = [
+  { replace = "src/worker.mjs", find = "pong 1", snippet = "adv_pong_2" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# The test partially mocks limits.ts (`vi.mock` with importOriginal).
+[[scenario]]
+fixture = "adv-node"
+name = "vi_mock"
+class = "adversarial"
+expect = "fail"
+breaks = "test/mock.test.ts"
+edits = [
+  { replace = "src/limits.ts", find = "MAX = 100", snippet = "adv_max_200" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+# A plugin with a transform hook (an auto-import of useCounter) is added through
+# vitest.shared.ts, a file the config imports, and a test stops importing useCounter.
+[[scenario]]
+fixture = "adv-node"
+name = "auto_import"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [
+  { replace = "vitest.shared.ts", find = "export const sharedPlugins = []", snippet = "adv_auto_import" },
+  { replace = "test/counter.test.ts", find = "import { useCounter } from '../src/composables/useCounter'\n", snippet = "empty" },
+]
+
+[[scenario]]
+fixture = "adv-node"
+name = "dts"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = "src/env.d.ts", snippet = "adv_dts" }]
+
+# Type tests (test/types.test-d.ts) are turned on through vitest.shared.ts.
+[[scenario]]
+fixture = "adv-node"
+name = "typecheck"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [
+  { replace = "vitest.shared.ts", find = "typecheck: { enabled: false }", snippet = "adv_typecheck" },
+]
+
+[[scenario]]
+fixture = "adv-node"
+name = "pnpm_lock"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = "pnpm-lock.yaml", snippet = "hash_comment" }]
+
+# The test runs packages/cli's bin with node (a path built with join()).
+[[scenario]]
+fixture = "adv-node"
+name = "exec_bin"
+class = "adversarial"
+expect = "fail"
+limit = true
+breaks = "test/exec.test.ts"
+edits = [
+  { replace = "packages/cli/bin/adv-cli.mjs", find = "adv-cli 1", snippet = "adv_cli_2" },
+  { append = "src/leaf.ts", snippet = "ts_fn" },
+]
+
+[[scenario]]
+fixture = "adv-node"
+name = "leaf_pass"
+class = "adversarial"
+expect = "pass"
+edits = [{ append = "src/leaf.ts", snippet = "ts_fn" }]
+
+# ---------------------------------------------------------------- adv-jest (Jest; units are test files)
+
+# `@cfg/*` is a moduleNameMapper regex.
+[[scenario]]
+fixture = "adv-jest"
+name = "module_name_mapper"
+class = "adversarial"
+expect = "fail"
+breaks = "test/mapper.test.js"
+edits = [
+  { replace = "src/config/defaults.js", find = "retries: 3", snippet = "adv_jest_retries" },
+  { append = "src/leaf.js", snippet = "js_fn" },
+]
+
+# A manual mock added beside the module the test automocks (`jest.mock` without a factory).
+[[scenario]]
+fixture = "adv-jest"
+name = "mocks_added"
+class = "adversarial"
+expect = "fail"
+breaks = "test/transport.test.js"
+edits = [
+  { create = "src/__mocks__/transport.js", snippet = "adv_jest_mock" },
+  { append = "src/leaf.js", snippet = "js_fn" },
+]
+
+# Only test/setup.js (setupFilesAfterEnv) requires matchers.js; test/matcher.test.js uses the
+# matcher it registers.
+[[scenario]]
+fixture = "adv-jest"
+name = "setup_files_after_env"
+class = "adversarial"
+expect = "fail"
+breaks = "test/matcher.test.js"
+edits = [
+  { replace = "src/matchers.js", find = "% 2 === 0", snippet = "adv_odd" },
+  { append = "src/leaf.js", snippet = "js_fn" },
+]
+
+[[scenario]]
+fixture = "adv-jest"
+name = "leaf_pass"
+class = "adversarial"
+expect = "pass"
+edits = [{ append = "src/leaf.js", snippet = "js_fn" }]
+
+# ---------------------------------------------------------------- adv-python (pytest; units are test files)
+
+# A fixture of tests/billing/conftest.py, injected by name (no import).
+[[scenario]]
+fixture = "adv-python"
+name = "conftest"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/billing/test_invoice.py"
+edits = [
+  { replace = "tests/billing/conftest.py", find = "\"EUR\"", snippet = "adv_usd" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# Importing adv.plugins.csv runs adv/plugins/__init__.py first, which registers the separator.
+[[scenario]]
+fixture = "adv-python"
+name = "init_py"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_plugins.py"
+edits = [
+  { replace = "src/adv/plugins/__init__.py", find = "registry.register(\"csv\", \",\")", snippet = "adv_semicolon" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# adv.loader imports "adv.formats.jsonfmt" with importlib.import_module.
+[[scenario]]
+fixture = "adv-python"
+name = "importlib_string"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_loader.py"
+edits = [
+  { replace = "src/adv/formats/jsonfmt.py", find = "\".json\"", snippet = "adv_jsn" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# The root conftest loads `pytest_plugins = ["adv_fixtures"]` (an undotted name on pythonpath).
+[[scenario]]
+fixture = "adv-python"
+name = "pytest_plugins"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_plugin_fixture.py"
+edits = [
+  { replace = "src/adv_fixtures.py", find = "\"hello\"", snippet = "adv_howdy_quoted" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# `import helpers` finds tests/helpers.py because pytest puts tests/ (no __init__.py) on sys.path.
+[[scenario]]
+fixture = "adv-python"
+name = "rootdir_helper"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_helpers.py"
+edits = [
+  { replace = "tests/helpers.py", find = "x * 2", snippet = "adv_times_three" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# The test reads tests/data/rates.csv at run time.
+[[scenario]]
+fixture = "adv-python"
+name = "data_file"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_data_file.py"
+why = "unmapped"
+edits = [
+  { replace = "tests/data/rates.csv", find = "USD,1.1", snippet = "adv_usd_rate" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# adv/ext.py added beside the namespace package adv/ext/ (no __init__.py): the module wins.
+[[scenario]]
+fixture = "adv-python"
+name = "shadowed_mod"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_slug.py"
+why = "shadowing"
+edits = [
+  { create = "src/adv/ext.py", snippet = "adv_py_ext" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# The test runs `python -m adv.cli` in a subprocess.
+[[scenario]]
+fixture = "adv-python"
+name = "python_m"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_cli.py"
+edits = [
+  { replace = "src/adv/cli.py", find = "adv-cli 1", snippet = "adv_cli_2" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+# money.py becomes the package money/__init__.py (`adv.money` still imports) and changes.
+[[scenario]]
+fixture = "adv-python"
+name = "rename_break"
+class = "adversarial"
+expect = "fail"
+breaks = "tests/test_money.py"
+edits = [
+  { rename = "src/adv/money.py", to = "src/adv/money/__init__.py" },
+  { replace = "src/adv/money/__init__.py", find = ".2f", snippet = "adv_py_fixed_1" },
+  { append = "src/adv/leaf.py", snippet = "py_fn" },
+]
+
+[[scenario]]
+fixture = "adv-python"
+name = "uv_lock"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = "uv.lock", snippet = "hash_comment" }]
+
+# pytest-django's setting added to the pytest configuration.
+[[scenario]]
+fixture = "adv-python"
+name = "django_settings"
+class = "adversarial"
+expect = "full"
+why = "global"
+edits = [{ append = "pyproject.toml", snippet = "adv_django" }]
+
+[[scenario]]
+fixture = "adv-python"
+name = "leaf_pass"
+class = "adversarial"
+expect = "pass"
+edits = [{ append = "src/adv/leaf.py", snippet = "py_fn" }]

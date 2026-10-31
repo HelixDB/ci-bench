@@ -1,0 +1,10 @@
+{
+  "name": "@adv/cli",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "adv-cli": "./bin/adv-cli.mjs"
+  }
+}

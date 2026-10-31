@@ -1,0 +1,14 @@
+# ci-bench's adversarial pytest fixture (synthetic, MIT): see scenarios.toml, class "adversarial".
+# A virtual project (no build system): pytest finds the code through `pythonpath`.
+[project]
+name = "adv"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
